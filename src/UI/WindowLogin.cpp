@@ -12,6 +12,7 @@
 #include "BSGameSDK.hpp"
 #include "UtilMat.hpp"
 #include "CookieParser.hpp"
+#include "AsyncLogger.h"
 
 WindowLogin::WindowLogin(QWidget* parent) :
     QWidget(parent),
@@ -524,6 +525,13 @@ void WindowLogin::StartQRCodeLogin()
         QRCodelabel->setText("二维码加载中");
         AllowDrawQRCode.store(false);
         const std::string qrcodeString{ GetLoginQrcodeUrl() };
+        if (qrcodeString.size() < 24)
+        {
+            LogError("账号登录二维码生成失败，返回 URL 为空或长度异常");
+            emit showMessagebox("二维码加载失败，请刷新重试");
+            emit QrcodeLoginResult(false);
+            return;
+        }
         ticket = std::string{ qrcodeString.data() + qrcodeString.size() - 24, 24 };
         QrcodeMat = createQrCodeToCvMat(qrcodeString);
         QRCodeQImage = CV_8UC1_MatToQImage(QrcodeMat);

@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <string>
+
 #include <QImage>
 #include <QtCore>
 #include <opencv2/opencv.hpp>
@@ -7,7 +9,8 @@
 
 inline cv::Mat createQrCodeToCvMat(const std::string_view qrcodeString)
 {
-    const qrcodegen::QrCode qr{ qrcodegen::QrCode::encodeText(qrcodeString.data(), qrcodegen::QrCode::Ecc::QUARTILE) };
+    const std::string qrText{ qrcodeString };
+    const qrcodegen::QrCode qr{ qrcodegen::QrCode::encodeText(qrText.c_str(), qrcodegen::QrCode::Ecc::QUARTILE) };
     const int size{ qr.getSize() };
     const int scale{ 5 };
     const int padding{ 0 };

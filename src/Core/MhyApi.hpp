@@ -3,10 +3,14 @@
 #include <string>
 #include <string_view>
 #include <format>
+#include <exception>
 #include <random>
 #include <sstream>
 #include <optional>
 #include <iostream>
+#include <stdexcept>
+#include <unordered_map>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 #include <cpr/cpr.h>
@@ -20,6 +24,39 @@
 
 static const std::string device_id{ CreateUUID::CreateUUID4() };
 static GameType loginType{ GameType::TearsOfThemis };
+
+inline void ReplaceAll(std::string& value, const std::string_view from, const std::string_view to)
+{
+    if (from.empty())
+    {
+        return;
+    }
+
+    std::size_t pos{};
+    while ((pos = value.find(from, pos)) != std::string::npos)
+    {
+        value.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+}
+
+inline std::string NormalizeLoginQrcodeUrl(std::string url)
+{
+    constexpr std::string_view separators[]{ R"(\u0026)", "u0026", "0026" };
+    constexpr std::string_view nextKeys[]{ "app_name=", "bbs=", "biz_key=", "expire=", "ticket=" };
+
+    for (const auto separator : separators)
+    {
+        for (const auto nextKey : nextKeys)
+        {
+            const std::string pattern{ std::string(separator) + std::string(nextKey) };
+            const std::string replacement{ "&" + std::string(nextKey) };
+            ReplaceAll(url, pattern, replacement);
+        }
+    }
+
+    return url;
+}
 
 [[nodiscard]] inline std::string DataSignAlgorithmVersionGen1()
 {
@@ -70,6 +107,7 @@ inline cpr::Header GetRequestHeader()
 
 inline std::string GetLoginQrcodeUrl(const GameType type = loginType)
 {
+    LogInfo("请求账号登录二维码，gameType=" + ToString(type));
     auto res = cpr::Post(
         cpr::Url{ api::mhy::hk4e::qrcode_fetch },
         cpr::Body{ nlohmann::json{
@@ -78,9 +116,47 @@ inline std::string GetLoginQrcodeUrl(const GameType type = loginType)
                        .dump() },
         cpr::Header{ { "Content-Type", "application/json" } });
 
-    auto data = nlohmann::json::parse(res.text);
-    std::string qrcodeUrl = data["data"]["url"].get<std::string>();
-    return qrcodeUrl;
+    if (res.error || res.status_code != 200 || res.text.empty())
+    {
+        LogWarning("账号登录二维码请求异常，gameType=" + ToString(type) +
+                   ", status=" + std::to_string(res.status_code) +
+                   ", error=" + res.error.message);
+        return {};
+    }
+
+    std::string qrcodeUrl;
+    try
+    {
+        const auto data = nlohmann::json::parse(res.text);
+        const int retcode = data.value("retcode", -1);
+        if (retcode != 0)
+        {
+            LogWarning("账号登录二维码请求失败，gameType=" + ToString(type) +
+                       ", retcode=" + std::to_string(retcode));
+            return {};
+        }
+        qrcodeUrl = data["data"]["url"].get<std::string>();
+    }
+    catch (const std::exception& e)
+    {
+        LogError("账号登录二维码响应解析异常，gameType=" + ToString(type) +
+                 ", error=" + e.what());
+        return {};
+    }
+
+    const std::string normalizedUrl{ NormalizeLoginQrcodeUrl(std::move(qrcodeUrl)) };
+    if (normalizedUrl.size() < 24)
+    {
+        LogWarning("账号登录二维码 URL 异常，gameType=" + ToString(type) +
+                   ", length=" + std::to_string(normalizedUrl.size()));
+        return {};
+    }
+
+    const std::string ticket{ normalizedUrl.substr(normalizedUrl.size() - 24) };
+    LogInfo("账号登录二维码已生成，gameType=" + ToString(type) +
+            ", urlLength=" + std::to_string(normalizedUrl.size()) +
+            ", ticket=" + MaskSensitive(ticket));
+    return normalizedUrl;
 }
 
 inline std::tuple<LoginQRCodeState, std::string, std::string> GetQRCodeState(
@@ -96,10 +172,35 @@ inline std::tuple<LoginQRCodeState, std::string, std::string> GetQRCodeState(
                        .dump() },
         cpr::Header{ { "Content-Type", "application/json" } });
 
-    const auto data = nlohmann::json::parse(response.text);
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("账号登录二维码状态查询异常，gameType=" + ToString(type) +
+                   ", ticket=" + MaskSensitive(ticket) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+        return { LoginQRCodeState::Expired, {}, {} };
+    }
+
+    nlohmann::json data;
+    try
+    {
+        data = nlohmann::json::parse(response.text);
+    }
+    catch (const std::exception& e)
+    {
+        LogError("账号登录二维码状态响应解析异常，gameType=" + ToString(type) +
+                 ", ticket=" + MaskSensitive(ticket) +
+                 ", error=" + e.what());
+        return { LoginQRCodeState::Expired, {}, {} };
+    }
 
     if (data.value("retcode", -1) != 0)
+    {
+        LogWarning("账号登录二维码状态查询失败，gameType=" + ToString(type) +
+                   ", ticket=" + MaskSensitive(ticket) +
+                   ", retcode=" + std::to_string(data.value("retcode", -1)));
         return { LoginQRCodeState::Expired, {}, {} };
+    }
 
     static const std::unordered_map<std::string, LoginQRCodeState> stateMap{
         { "Init", LoginQRCodeState::Init },
@@ -111,15 +212,38 @@ inline std::tuple<LoginQRCodeState, std::string, std::string> GetQRCodeState(
     const auto it = stateMap.find(stat);
 
     if (it == stateMap.end())
+    {
+        LogWarning("账号登录二维码状态未知，gameType=" + ToString(type) +
+                   ", ticket=" + MaskSensitive(ticket) +
+                   ", stat=" + stat);
         return { LoginQRCodeState::Expired, {}, {} };
+    }
 
     if (it->second == LoginQRCodeState::Confirmed)
     {
-        const auto payload = nlohmann::json::parse(
-            data["data"]["payload"]["raw"].get<std::string>());
-        return { LoginQRCodeState::Confirmed,
-                 payload["uid"].get<std::string>(),
-                 payload["token"].get<std::string>() };
+        LogInfo("账号登录二维码已确认，gameType=" + ToString(type) +
+                ", ticket=" + MaskSensitive(ticket));
+        try
+        {
+            const auto payload = nlohmann::json::parse(
+                data["data"]["payload"]["raw"].get<std::string>());
+            return { LoginQRCodeState::Confirmed,
+                     payload["uid"].get<std::string>(),
+                     payload["token"].get<std::string>() };
+        }
+        catch (const std::exception& e)
+        {
+            LogError("账号登录二维码确认载荷解析异常，gameType=" + ToString(type) +
+                     ", ticket=" + MaskSensitive(ticket) +
+                     ", error=" + e.what());
+            return { LoginQRCodeState::Expired, {}, {} };
+        }
+    }
+
+    if (it->second == LoginQRCodeState::Scanned)
+    {
+        LogInfo("账号登录二维码已扫码，gameType=" + ToString(type) +
+                ", ticket=" + MaskSensitive(ticket));
     }
 
     return { it->second, {}, {} };
