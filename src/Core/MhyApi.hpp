@@ -16,6 +16,7 @@
 #include "CryptoKit.h"
 #include "UtilString.hpp"
 #include "TimeStamp.hpp"
+#include "AsyncLogger.h"
 
 static const std::string device_id{ CreateUUID::CreateUUID4() };
 static GameType loginType{ GameType::TearsOfThemis };
@@ -259,6 +260,8 @@ inline auto LoginByMobileCaptcha(const std::string_view actionType, const std::s
 
 inline bool ScanQRLogin(const std::string_view url, const std::string_view ticket, GameType gameType)
 {
+    LogInfo("提交二维码扫码请求，gameType=" + ToString(gameType) +
+            ", ticket=" + MaskSensitive(ticket));
     const auto response = cpr::Post(
         cpr::Url{ url },
         cpr::Body{ nlohmann::json{
@@ -268,12 +271,43 @@ inline bool ScanQRLogin(const std::string_view url, const std::string_view ticke
                        .dump() },
         cpr::Header{ { "Content-Type", "application/json" } });
 
-    const auto j = nlohmann::json::parse(response.text);
-    return j.value("retcode", -1) == 0;
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("二维码扫码请求异常，gameType=" + ToString(gameType) +
+                   ", ticket=" + MaskSensitive(ticket) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+    }
+
+    try
+    {
+        const auto j = nlohmann::json::parse(response.text);
+        const int retcode = j.value("retcode", -1);
+        if (retcode == 0)
+        {
+            LogInfo("二维码扫码成功，gameType=" + ToString(gameType) +
+                    ", ticket=" + MaskSensitive(ticket));
+            return true;
+        }
+        LogWarning("二维码扫码失败，gameType=" + ToString(gameType) +
+                   ", ticket=" + MaskSensitive(ticket) +
+                   ", retcode=" + std::to_string(retcode));
+        return false;
+    }
+    catch (const std::exception& e)
+    {
+        LogError("二维码扫码响应解析异常，gameType=" + ToString(gameType) +
+                 ", ticket=" + MaskSensitive(ticket) +
+                 ", error=" + e.what());
+        return false;
+    }
 }
 
 inline bool ConfirmQRLogin(const std::string_view url, const std::string_view uid, const std::string_view gameToken, const std::string_view ticket, GameType gameType)
 {
+    LogInfo("提交二维码登录确认请求，gameType=" + ToString(gameType) +
+            ", uid=" + MaskSensitive(uid) +
+            ", ticket=" + MaskSensitive(ticket));
     const auto response = cpr::Post(
         cpr::Url{ url },
         cpr::Body{ nlohmann::json{
@@ -284,8 +318,40 @@ inline bool ConfirmQRLogin(const std::string_view url, const std::string_view ui
                        .dump() },
         cpr::Header{ { "Content-Type", "application/json" } });
 
-    const auto j = nlohmann::json::parse(response.text);
-    return j.value("retcode", -1) == 0;
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("二维码登录确认请求异常，gameType=" + ToString(gameType) +
+                   ", uid=" + MaskSensitive(uid) +
+                   ", ticket=" + MaskSensitive(ticket) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+    }
+
+    try
+    {
+        const auto j = nlohmann::json::parse(response.text);
+        const int retcode = j.value("retcode", -1);
+        if (retcode == 0)
+        {
+            LogInfo("二维码登录确认成功，gameType=" + ToString(gameType) +
+                    ", uid=" + MaskSensitive(uid) +
+                    ", ticket=" + MaskSensitive(ticket));
+            return true;
+        }
+        LogWarning("二维码登录确认失败，gameType=" + ToString(gameType) +
+                   ", uid=" + MaskSensitive(uid) +
+                   ", ticket=" + MaskSensitive(ticket) +
+                   ", retcode=" + std::to_string(retcode));
+        return false;
+    }
+    catch (const std::exception& e)
+    {
+        LogError("二维码登录确认响应解析异常，gameType=" + ToString(gameType) +
+                 ", uid=" + MaskSensitive(uid) +
+                 ", ticket=" + MaskSensitive(ticket) +
+                 ", error=" + e.what());
+        return false;
+    }
 }
 
 inline std::string makeSign(const nlohmann::json& data)
@@ -321,6 +387,7 @@ inline std::string& getOAString()
 
 inline std::tuple<int, std::string, std::string, std::string> GetBH3ExternalLoginInfo(const std::string& uid, const std::string& access_key)
 {
+    LogInfo("请求崩坏3 B服外部登录信息，uid=" + MaskSensitive(uid));
     const std::string bodyData = std::format(R"({{"access_key":"{}","uid":{}}})", access_key, uid);
 
     nlohmann::json body{
@@ -335,7 +402,24 @@ inline std::tuple<int, std::string, std::string, std::string> GetBH3ExternalLogi
         cpr::Header{ { "Content-Type", "application/json" } },
         cpr::Body{ body.dump() });
 
-    const auto j = nlohmann::json::parse(response.text);
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("崩坏3 B服外部登录信息请求异常，uid=" + MaskSensitive(uid) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+    }
+
+    nlohmann::json j;
+    try
+    {
+        j = nlohmann::json::parse(response.text);
+    }
+    catch (const std::exception& e)
+    {
+        LogError("崩坏3 B服外部登录信息响应解析异常，uid=" + MaskSensitive(uid) +
+                 ", error=" + e.what());
+        return { -1, {}, {}, {} };
+    }
     const int retcode = j.value("retcode", -1);
 
 #ifdef _DEBUG
@@ -344,9 +428,12 @@ inline std::tuple<int, std::string, std::string, std::string> GetBH3ExternalLogi
 
     if (retcode != 0)
     {
+        LogWarning("崩坏3 B服外部登录信息请求失败，uid=" + MaskSensitive(uid) +
+                   ", retcode=" + std::to_string(retcode));
         return { retcode, {}, {}, {} };
     }
 
+    LogInfo("崩坏3 B服外部登录信息请求成功，uid=" + MaskSensitive(uid));
     return { 0,
              j["data"]["open_id"].get<std::string>(),
              j["data"]["combo_token"].get<std::string>(),
@@ -355,6 +442,7 @@ inline std::tuple<int, std::string, std::string, std::string> GetBH3ExternalLogi
 
 inline ScanRet scanCheck(const std::string& ticket, const std::string_view scanUrl = api::mhy::bh3::qrcode_scan)
 {
+    LogInfo("提交崩坏3 B服二维码扫码请求，ticket=" + MaskSensitive(ticket));
     const std::string body = nlohmann::json{
         { "app_id", "1" },
         { "device", "0000000000000000" },
@@ -367,15 +455,46 @@ inline ScanRet scanCheck(const std::string& ticket, const std::string_view scanU
         cpr::Body{ body },
         cpr::Header{ { "Content-Type", "application/json" } });
 
-    const auto j = nlohmann::json::parse(response.text);
-    return j.value("retcode", -1) == 0 ? ScanRet::SUCCESS : ScanRet::FAILURE_1;
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("崩坏3 B服二维码扫码请求异常，ticket=" + MaskSensitive(ticket) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+    }
+
+    try
+    {
+        const auto j = nlohmann::json::parse(response.text);
+        const int retcode = j.value("retcode", -1);
+        if (retcode == 0)
+        {
+            LogInfo("崩坏3 B服二维码扫码成功，ticket=" + MaskSensitive(ticket));
+            return ScanRet::SUCCESS;
+        }
+        LogWarning("崩坏3 B服二维码扫码失败，ticket=" + MaskSensitive(ticket) +
+                   ", retcode=" + std::to_string(retcode));
+        return ScanRet::FAILURE_1;
+    }
+    catch (const std::exception& e)
+    {
+        LogError("崩坏3 B服二维码扫码响应解析异常，ticket=" + MaskSensitive(ticket) +
+                 ", error=" + e.what());
+        return ScanRet::FAILURE_1;
+    }
 }
 
 inline ScanRet scanConfirm(const std::string& ticket, const std::string& uid, const std::string& access_key, const std::string& name, const std::string_view confirmUrl = api::mhy::bh3::qrcode_confirm)
 {
+    LogInfo("提交崩坏3 B服二维码登录确认请求，uid=" + MaskSensitive(uid) +
+            ", ticket=" + MaskSensitive(ticket));
     auto [code, open_id, combo_token, combo_id] = GetBH3ExternalLoginInfo(uid, access_key);
     if (code != 0)
+    {
+        LogWarning("崩坏3 B服二维码登录确认前置登录信息失败，uid=" + MaskSensitive(uid) +
+                   ", ticket=" + MaskSensitive(ticket) +
+                   ", code=" + std::to_string(code));
         return ScanRet::FAILURE_2;
+    }
 
     const auto raw =
         nlohmann::json{
@@ -420,6 +539,34 @@ inline ScanRet scanConfirm(const std::string& ticket, const std::string& uid, co
         cpr::Header{ { "Content-Type", "application/json" } },
         cpr::Body{ postBody.dump() });
 
-    const auto j = nlohmann::json::parse(response.text);
-    return j.value("retcode", -1) == 0 ? ScanRet::SUCCESS : ScanRet::FAILURE_2;
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("崩坏3 B服二维码登录确认请求异常，uid=" + MaskSensitive(uid) +
+                   ", ticket=" + MaskSensitive(ticket) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+    }
+
+    try
+    {
+        const auto j = nlohmann::json::parse(response.text);
+        const int retcode = j.value("retcode", -1);
+        if (retcode == 0)
+        {
+            LogInfo("崩坏3 B服二维码登录确认成功，uid=" + MaskSensitive(uid) +
+                    ", ticket=" + MaskSensitive(ticket));
+            return ScanRet::SUCCESS;
+        }
+        LogWarning("崩坏3 B服二维码登录确认失败，uid=" + MaskSensitive(uid) +
+                   ", ticket=" + MaskSensitive(ticket) +
+                   ", retcode=" + std::to_string(retcode));
+        return ScanRet::FAILURE_2;
+    }
+    catch (const std::exception& e)
+    {
+        LogError("崩坏3 B服二维码登录确认响应解析异常，uid=" + MaskSensitive(uid) +
+                 ", ticket=" + MaskSensitive(ticket) +
+                 ", error=" + e.what());
+        return ScanRet::FAILURE_2;
+    }
 }

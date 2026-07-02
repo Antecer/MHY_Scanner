@@ -9,6 +9,7 @@
 #include <QStringList>
 #include <QClipboard>
 
+#include "AsyncLogger.h"
 #include "MhyApi.hpp"
 #include "BSGameSDK.hpp"
 
@@ -17,6 +18,7 @@ WindowMain::WindowMain(QWidget* parent) :
     t1(this),
     t2(this)
 {
+    LogInfo("主窗口初始化");
     QApplication::setFont(QFont("微软雅黑", 9));
     ui.setupUi(this);
     connect(ui.action1_3, &QAction::triggered, this, &WindowMain::AddAccount);
@@ -111,6 +113,7 @@ WindowMain::WindowMain(QWidget* parent) :
 
 WindowMain::~WindowMain()
 {
+    LogInfo("主窗口析构，停止扫码线程");
     t1.stop();
     t2.stop();
 }
@@ -191,6 +194,7 @@ void WindowMain::AddAccount()
 
 void WindowMain::pBtstartScreen(bool clicked)
 {
+    LogInfo(std::string("用户") + (clicked ? "启动" : "停止") + "屏幕扫码");
     ui.pBtstartScreen->setEnabled(false);
     ui.pBtStream->setEnabled(false);
     ui.pBtstartScreen->setText("加载中。。。");
@@ -198,23 +202,28 @@ void WindowMain::pBtstartScreen(bool clicked)
     QThreadPool::globalInstance()->start([&, clicked]() {
         if (!clicked)
         {
+            LogInfo("收到停止屏幕扫码请求");
             emit StopScanner();
             return;
         }
         //FIXME 没有及时更新
         if (countA == -1)
         {
+            LogWarning("启动屏幕扫码失败：未选择账号");
             emit AccountNotSelected();
             return;
         }
         if (std::string type = userinfo["account"][countA]["type"]; type == "官服")
         {
+            LogInfo("准备启动屏幕官服扫码，accountIndex=" + std::to_string(countA));
             std::string stoken = userinfo["account"][countA]["access_key"];
             std::string uid = userinfo["account"][countA]["uid"];
             std::string mid = userinfo["account"][countA]["mid"];
             auto [code, game_token] = GetGameTokenByStoken(stoken, mid);
             if (code != 0)
             {
+                LogWarning("获取官服 game_token 失败，uid=" + MaskSensitive(uid) +
+                           ", code=" + std::to_string(code));
                 emit AccountError();
                 return;
             }
@@ -223,12 +232,15 @@ void WindowMain::pBtstartScreen(bool clicked)
         }
         else if (type == "崩坏3B服")
         {
+            LogInfo("准备启动屏幕崩坏3 B服扫码，accountIndex=" + std::to_string(countA));
             std::string stoken{ userinfo["account"][countA]["access_key"] };
             std::string uid{ userinfo["account"][countA]["uid"] };
             //可用性检查
             auto result{ BSGameSDK::BH3::GetUserInfo(uid, stoken) };
             if (result.code != 0)
             {
+                LogWarning("崩坏3 B服账号可用性检查失败，uid=" + MaskSensitive(uid) +
+                           ", code=" + std::to_string(result.code));
                 emit AccountError();
                 return;
             }
@@ -236,12 +248,14 @@ void WindowMain::pBtstartScreen(bool clicked)
             t1.setLoginInfo(uid, stoken, result.uname);
         }
         t1.start();
+        LogInfo("屏幕扫码线程已启动");
         emit StartScanScreen();
     });
 }
 
 void WindowMain::pBtStream(bool clicked)
 {
+    LogInfo(std::string("用户") + (clicked ? "启动" : "停止") + "直播流扫码");
     ui.pBtstartScreen->setEnabled(false);
     ui.pBtStream->setEnabled(false);
     ui.pBtStream->setText("加载中。。。");
@@ -250,11 +264,13 @@ void WindowMain::pBtStream(bool clicked)
     QThreadPool::globalInstance()->start([&, clicked]() {
         if (!clicked)
         {
+            LogInfo("收到停止直播流扫码请求");
             emit StopScanner();
             return;
         }
         if (countA == -1)
         {
+            LogWarning("启动直播流扫码失败：未选择账号");
             emit AccountNotSelected();
             return;
         }
@@ -263,21 +279,27 @@ void WindowMain::pBtStream(bool clicked)
         //检查直播间状态
         if (!GetStreamLink(ui.lineEditLiveId->text().toStdString(), stream_link, heards))
         {
+            LogWarning("启动直播流扫码失败：未获取到直播流地址");
             emit StopScanner();
             return;
         }
         else
         {
+            LogInfo("直播流地址已获取，准备设置到扫码线程，linkLength=" +
+                    std::to_string(stream_link.length()));
             t2.setUrl(stream_link, heards);
         }
         if (const std::string& type = userinfo["account"][countA]["type"]; type == "官服")
         {
+            LogInfo("准备启动直播流官服扫码，accountIndex=" + std::to_string(countA));
             std::string stoken = userinfo["account"][countA]["access_key"];
             std::string uid = userinfo["account"][countA]["uid"];
             std::string mid = userinfo["account"][countA]["mid"];
             auto [code, game_token] = GetGameTokenByStoken(stoken, mid);
             if (code != 0)
             {
+                LogWarning("获取官服 game_token 失败，uid=" + MaskSensitive(uid) +
+                           ", code=" + std::to_string(code));
                 emit AccountError();
                 return;
             }
@@ -286,12 +308,15 @@ void WindowMain::pBtStream(bool clicked)
         }
         else if (type == "崩坏3B服")
         {
+            LogInfo("准备启动直播流崩坏3 B服扫码，accountIndex=" + std::to_string(countA));
             std::string stoken{ userinfo["account"][countA]["access_key"] };
             std::string uid{ userinfo["account"][countA]["uid"] };
             //可用性检查
             auto result{ BSGameSDK::BH3::GetUserInfo(uid, stoken) };
             if (result.code != 0)
             {
+                LogWarning("崩坏3 B服账号可用性检查失败，uid=" + MaskSensitive(uid) +
+                           ", code=" + std::to_string(result.code));
                 emit AccountError();
                 return;
             }
@@ -299,12 +324,14 @@ void WindowMain::pBtStream(bool clicked)
             t2.setLoginInfo(uid, stoken, result.uname);
         }
         t2.start();
+        LogInfo("直播流扫码线程已启动");
         emit StartScanLive();
     });
 }
 
 void WindowMain::closeEvent(QCloseEvent* event)
 {
+    LogInfo("主窗口关闭，停止扫码线程");
     t1.stop();
     t2.stop();
 }
@@ -315,8 +342,11 @@ void WindowMain::showEvent(QShowEvent* event)
 
 void WindowMain::islogin(const ScanRet ret)
 {
+    LogInfo("主窗口收到扫码结果，result=" + ToString(ret));
     if (ret == ScanRet::SUCCESS && (bool)userinfo["auto_exit"] == true)
     {
+        LogInfo("扫码成功且启用自动退出，准备退出程序");
+        AsyncLogger::instance().stop();
         exit(0);
     }
     pBtStop();
@@ -355,6 +385,8 @@ void WindowMain::islogin(const ScanRet ret)
 
 void WindowMain::loginConfirmTip(const GameType gameType, bool b)
 {
+    LogInfo("显示登录确认弹窗，gameType=" + ToString(gameType) +
+            ", source=" + std::string(b ? "screen" : "stream"));
     QString info("正在使用账号" + ui.lineEditUname->text());
     switch (gameType)
     {
@@ -386,8 +418,10 @@ void WindowMain::loginConfirmTip(const GameType gameType, bool b)
     pBtStop();
     if (messageBox->clickedButton() != yesButton)
     {
+        LogInfo("用户取消登录确认，gameType=" + ToString(gameType));
         return;
     }
+    LogInfo("用户确认登录，gameType=" + ToString(gameType));
     QThreadPool::globalInstance()->start([this, b] {
         if (b)
         {
@@ -452,6 +486,7 @@ void WindowMain::checkBoxAutoLogin(bool clicked)
 
 void WindowMain::liveIdError(const LiveStreamStatus status)
 {
+    LogWarning("直播间状态异常，status=" + ToString(status));
     switch (status)
     {
         using enum LiveStreamStatus;
@@ -501,14 +536,23 @@ bool WindowMain::checkDuplicates(const std::string uid)
 
 bool WindowMain::GetStreamLink(const std::string& roomid, std::string& url, std::map<std::string, std::string>& heards)
 {
-    auto info = GetLiveInfo(static_cast<LivePlatform>(ui.comboBox->currentIndex()), roomid);
+    const auto platform = static_cast<LivePlatform>(ui.comboBox->currentIndex());
+    LogInfo("请求直播流地址，platform=" + ToString(platform) +
+            ", roomID=" + roomid);
+    auto info = GetLiveInfo(platform, roomid);
     if (info.status == LiveStreamStatus::Normal)
     {
         url = info.link;
+        LogInfo("直播流地址获取成功，platform=" + ToString(platform) +
+                ", roomID=" + roomid +
+                ", linkLength=" + std::to_string(url.length()));
         return true;
     }
     else
     {
+        LogWarning("直播流地址获取失败，platform=" + ToString(platform) +
+                   ", roomID=" + roomid +
+                   ", status=" + ToString(info.status));
         Q_EMIT LiveStreamLinkError(info.status);
         return false;
     }
@@ -660,6 +704,8 @@ void WindowMain::configInitUpdate()
         }
         else
         {
+            LogError("配置文件错误，用户选择不重置，程序退出");
+            AsyncLogger::instance().stop();
             QMessageBox::information(this, "错误", "配置文件错误！\n无法继续运行！", QMessageBox::Yes);
             exit(1);
         }

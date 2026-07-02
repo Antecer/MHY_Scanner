@@ -7,6 +7,7 @@
 #include <QtConcurrent/QtConcurrent>
 #include <QThreadPool>
 
+#include "AsyncLogger.h"
 #include "QRScanner.h"
 #include "ScreenScan.h"
 #include "ScreenShotDXGI.hpp"
@@ -45,6 +46,7 @@ void QRCodeForScreen::setLoginInfo(const std::string& uid, const std::string& to
 
 void QRCodeForScreen::LoginOfficial()
 {
+    LogInfo("屏幕官服扫码循环开始");
     QThreadPool threadPool;
     threadPool.setMaxThreadCount(threadNumber);
     std::mutex mtx;
@@ -53,6 +55,8 @@ void QRCodeForScreen::LoginOfficial()
     int h{ 0 };
     screenshotdxgi.InitDevice();
     screenshotdxgi.InitDupl(0, w, h);
+    LogInfo("屏幕采集初始化完成，width=" + std::to_string(w) +
+            ", height=" + std::to_string(h));
     long mBufferSize = w * h * 4;
     uint8_t* mBuffer = new UCHAR[mBufferSize];
     while (m_stop.load())
@@ -84,6 +88,8 @@ void QRCodeForScreen::LoginOfficial()
             {
                 return;
             }
+            LogInfo("屏幕识别到二维码，gameType=" + ToString(gameType) +
+                    ", ticket=" + MaskSensitive(ticket));
             if (mtx.try_lock())
             {
                 if (!m_stop.load())
@@ -97,15 +103,19 @@ void QRCodeForScreen::LoginOfficial()
                     nlohmann::json config = nlohmann::json::parse(m_config->getConfig());
                     if (config["auto_login"])
                     {
+                        LogInfo("已开启自动登录，继续确认屏幕二维码登录，gameType=" + ToString(gameType));
                         continueLastLogin();
                     }
                     else
                     {
+                        LogInfo("等待用户确认屏幕二维码登录，gameType=" + ToString(gameType));
                         emit loginConfirm(gameType, true);
                     }
                 }
                 else
                 {
+                    LogWarning("屏幕二维码扫码失败，gameType=" + ToString(gameType) +
+                               ", ticket=" + MaskSensitive(ticket));
                     emit loginResults(ScanRet::FAILURE_1);
                 }
                 stop();
@@ -116,10 +126,12 @@ void QRCodeForScreen::LoginOfficial()
         screenshotdxgi.doneWithFrame();
     }
     delete[] mBuffer;
+    LogInfo("屏幕官服扫码循环结束");
 }
 
 void QRCodeForScreen::LoginBH3BiliBili()
 {
+    LogInfo("屏幕崩坏3 B服扫码循环开始");
     QThreadPool threadPool;
     threadPool.setMaxThreadCount(threadNumber);
     std::mutex mtx;
@@ -128,6 +140,8 @@ void QRCodeForScreen::LoginBH3BiliBili()
     int h{ 0 };
     screenshotdxgi.InitDevice();
     screenshotdxgi.InitDupl(0, w, h);
+    LogInfo("屏幕采集初始化完成，width=" + std::to_string(w) +
+            ", height=" + std::to_string(h));
     long mBufferSize = w * h * 4;
     uint8_t* mBuffer = new UCHAR[mBufferSize];
     while (m_stop.load())
@@ -157,6 +171,7 @@ void QRCodeForScreen::LoginBH3BiliBili()
             {
                 return;
             }
+            LogInfo("屏幕识别到崩坏3 B服二维码，ticket=" + MaskSensitive(ticket));
             if (mtx.try_lock())
             {
                 if (!m_stop.load())
@@ -170,15 +185,19 @@ void QRCodeForScreen::LoginBH3BiliBili()
                     nlohmann::json config = nlohmann::json::parse(m_config->getConfig());
                     if (config["auto_login"])
                     {
+                        LogInfo("已开启自动登录，继续确认屏幕崩坏3 B服二维码登录");
                         continueLastLogin();
                     }
                     else
                     {
+                        LogInfo("等待用户确认屏幕崩坏3 B服二维码登录");
                         emit loginConfirm(GameType::Honkai3_BiliBili, true);
                     }
                 }
                 else
                 {
+                    LogWarning("屏幕崩坏3 B服二维码扫码失败，ticket=" + MaskSensitive(ticket) +
+                               ", result=" + ToString(ret));
                     emit loginResults(ScanRet::FAILURE_1);
                 }
                 stop();
@@ -189,10 +208,14 @@ void QRCodeForScreen::LoginBH3BiliBili()
         screenshotdxgi.doneWithFrame();
     }
     delete[] mBuffer;
+    LogInfo("屏幕崩坏3 B服扫码循环结束");
 }
 
 void QRCodeForScreen::continueLastLogin()
 {
+    LogInfo("继续确认屏幕二维码登录，serverType=" + ToString(servertype) +
+            ", gameType=" + ToString(gameType) +
+            ", ticket=" + MaskSensitive(lastTicket));
     switch (servertype)
     {
         using enum ServerType;
@@ -201,10 +224,12 @@ void QRCodeForScreen::continueLastLogin()
         bool b = ConfirmQRLogin(confirmUrl, uid, gameToken, lastTicket, gameType);
         if (b)
         {
+            LogInfo("屏幕官服二维码登录确认成功，gameType=" + ToString(gameType));
             Q_EMIT loginResults(ScanRet::SUCCESS);
         }
         else
         {
+            LogWarning("屏幕官服二维码登录确认失败，gameType=" + ToString(gameType));
             Q_EMIT loginResults(ScanRet::FAILURE_2);
         }
     }
@@ -212,6 +237,7 @@ void QRCodeForScreen::continueLastLogin()
     case BH3_BiliBili:
     {
         ret = scanConfirm(lastTicket, uid, gameToken, m_name, confirmUrl);
+        LogInfo("屏幕崩坏3 B服二维码登录确认完成，result=" + ToString(ret));
         Q_EMIT loginResults(ret);
     }
     break;
@@ -224,6 +250,7 @@ void QRCodeForScreen::run()
 {
     ret = ScanRet::UNKNOW;
     m_stop.store(true);
+    LogInfo("屏幕扫码线程启动，serverType=" + ToString(servertype));
 #ifndef SHOW
     cv::namedWindow("Video_Stream", cv::WINDOW_AUTOSIZE);
 #endif
@@ -236,11 +263,13 @@ void QRCodeForScreen::run()
         LoginBH3BiliBili();
         break;
     default:
+        LogWarning("屏幕扫码线程遇到未知 serverType=" + ToString(servertype));
         break;
     }
 #ifndef SHOW
     cv::destroyWindow("Video_Stream");
 #endif
+    LogInfo("屏幕扫码线程结束，result=" + ToString(ret));
 }
 
 void QRCodeForScreen::stop()

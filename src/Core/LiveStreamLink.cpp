@@ -9,6 +9,8 @@
 #include <nlohmann/json.hpp>
 #include <cpr/cpr.h>
 
+#include "AsyncLogger.h"
+
 LiveBili::LiveBili(const std::string& roomID) :
     roomID(roomID)
 {
@@ -16,6 +18,7 @@ LiveBili::LiveBili(const std::string& roomID) :
 
 LiveStreamInfo LiveBili::GetLiveStreamInfo()
 {
+    LogInfo("开始获取 BiliBili 直播信息，roomID=" + roomID);
     // 获取房间初始化信息
     const cpr::Header headers = {
         { "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -26,6 +29,9 @@ LiveStreamInfo LiveBili::GetLiveStreamInfo()
         headers);
     if (r.error || r.status_code != 200 || r.text.empty())
     {
+        LogWarning("BiliBili 房间初始化请求失败，roomID=" + roomID +
+                   ", status=" + std::to_string(r.status_code) +
+                   ", error=" + r.error.message);
         return { LiveStreamStatus::Error, "" };
     }
     try
@@ -33,26 +39,33 @@ LiveStreamInfo LiveBili::GetLiveStreamInfo()
         auto roomInfo = nlohmann::json::parse(r.text, nullptr, false);
         if (roomInfo.is_discarded())
         {
+            LogWarning("BiliBili 房间初始化响应 JSON 解析失败，roomID=" + roomID);
             return { LiveStreamStatus::Error, "" };
         }
         int code = roomInfo["code"].get<int>();
         if (code == 60004)
         {
+            LogWarning("BiliBili 直播间不存在，roomID=" + roomID);
             return { LiveStreamStatus::Absent, "" };
         }
         if (code != 0)
         {
+            LogWarning("BiliBili 房间初始化返回非零 code，roomID=" + roomID +
+                       ", code=" + std::to_string(code));
             return { LiveStreamStatus::Error, "" };
         }
         const auto& data = roomInfo["data"];
         int liveStatus = data["live_status"].get<int>();
         if (liveStatus != 1)
         {
+            LogInfo("BiliBili 直播间未开播，roomID=" + roomID +
+                    ", live_status=" + std::to_string(liveStatus));
             return { LiveStreamStatus::NotLive, "" };
         }
         // 更新真实房间ID
         if (!data.contains("room_id"))
         {
+            LogWarning("BiliBili 房间初始化响应缺少 room_id，roomID=" + roomID);
             return { LiveStreamStatus::Error, "" };
         }
         realRoomID = std::to_string(data["room_id"].get<int>());
@@ -60,12 +73,19 @@ LiveStreamInfo LiveBili::GetLiveStreamInfo()
         std::string link = GetLinkByRealRoomID(realRoomID);
         if (link.empty())
         {
+            LogWarning("BiliBili 直播流地址为空，roomID=" + roomID +
+                       ", realRoomID=" + realRoomID);
             return { LiveStreamStatus::Error, "" };
         }
+        LogInfo("BiliBili 直播流获取成功，roomID=" + roomID +
+                ", realRoomID=" + realRoomID +
+                ", linkLength=" + std::to_string(link.length()));
         return { LiveStreamStatus::Normal, link };
     }
     catch (const nlohmann::json::exception& e)
     {
+        LogError("BiliBili 直播信息解析异常，roomID=" + roomID +
+                 ", error=" + e.what());
         return { LiveStreamStatus::Error, "" };
     }
 }
@@ -116,6 +136,9 @@ std::string LiveBili::GetStreamUrl(const cpr::Parameters param)
     auto r = cpr::Get(cpr::Url{ api::live::bili::v2_play_info }, param);
     if (r.error || r.status_code != 200 || r.text.empty())
     {
+        LogWarning("BiliBili 播放地址请求失败，realRoomID=" + realRoomID +
+                   ", status=" + std::to_string(r.status_code) +
+                   ", error=" + r.error.message);
         return "";
     }
     try
@@ -123,6 +146,7 @@ std::string LiveBili::GetStreamUrl(const cpr::Parameters param)
         auto playInfo = nlohmann::json::parse(r.text, nullptr, false);
         if (playInfo.is_discarded())
         {
+            LogWarning("BiliBili 播放地址响应 JSON 解析失败，realRoomID=" + realRoomID);
             return "";
         }
         const auto& data = playInfo["data"];
@@ -140,6 +164,8 @@ std::string LiveBili::GetStreamUrl(const cpr::Parameters param)
     }
     catch (const nlohmann::json::exception& e)
     {
+        LogError("BiliBili 播放地址解析异常，realRoomID=" + realRoomID +
+                 ", error=" + e.what());
         return "";
     }
 }
@@ -151,6 +177,7 @@ LiveDouyin::LiveDouyin(const std::string& roomID) :
 
 LiveStreamInfo LiveDouyin::GetLiveStreamInfo()
 {
+    LogInfo("开始获取抖音直播信息，roomID=" + m_roomID);
     try
     {
         // 构建请求参数
@@ -172,12 +199,17 @@ LiveStreamInfo LiveDouyin::GetLiveStreamInfo()
         auto response = cpr::Get(cpr::Url{ url }, headers);
         if (response.error || response.status_code != 200 || response.text.empty())
         {
+            LogWarning("抖音房间请求失败，roomID=" + m_roomID +
+                       ", status=" + std::to_string(response.status_code) +
+                       ", error=" + response.error.message);
             return { LiveStreamStatus::Error, "" };
         }
         auto streamInfo = nlohmann::json::parse(response.text);
         int status_code = streamInfo["status_code"].get<int>();
         if (status_code != 0)
         {
+            LogWarning("抖音房间不存在或不可访问，roomID=" + m_roomID +
+                       ", status_code=" + std::to_string(status_code));
             return { LiveStreamStatus::Absent, "" };
         }
         // 获取直播数据
@@ -189,19 +221,33 @@ LiveStreamInfo LiveDouyin::GetLiveStreamInfo()
             std::string link = GetStreamLinkFromResponse(data);
             if (link.empty())
             {
+                LogWarning("抖音直播流地址为空，roomID=" + m_roomID);
                 return { LiveStreamStatus::Error, "" };
             }
+            LogInfo("抖音直播流获取成功，roomID=" + m_roomID +
+                    ", linkLength=" + std::to_string(link.length()));
             return { LiveStreamStatus::Normal, link };
         }
         // status == 4 代表未开播
         else if (status == 4)
         {
+            LogInfo("抖音直播间未开播，roomID=" + m_roomID +
+                    ", status=" + std::to_string(status));
             return { LiveStreamStatus::NotLive, "" };
         }
+        LogWarning("抖音直播间状态未知，roomID=" + m_roomID +
+                   ", status=" + std::to_string(status));
+        return { LiveStreamStatus::Error, "" };
+    }
+    catch (const std::exception& e)
+    {
+        LogError("抖音直播信息解析异常，roomID=" + m_roomID +
+                 ", error=" + e.what());
         return { LiveStreamStatus::Error, "" };
     }
     catch (...)
     {
+        LogError("抖音直播信息解析发生未知异常，roomID=" + m_roomID);
         return { LiveStreamStatus::Error, "" };
     }
 }
@@ -235,8 +281,15 @@ std::string LiveDouyin::GetStreamLinkFromResponse(const nlohmann::json& data)
 
         return "";
     }
+    catch (const std::exception& e)
+    {
+        LogError("抖音直播流地址解析异常，roomID=" + m_roomID +
+                 ", error=" + e.what());
+        return "";
+    }
     catch (...)
     {
+        LogError("抖音直播流地址解析发生未知异常，roomID=" + m_roomID);
         return "";
     }
 }

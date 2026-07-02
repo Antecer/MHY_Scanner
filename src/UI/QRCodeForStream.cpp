@@ -3,6 +3,7 @@
 #include <string>
 #include <string_view>
 
+#include "AsyncLogger.h"
 #include "QRScanner.h"
 #include "MhyApi.hpp"
 
@@ -52,10 +53,12 @@ void QRCodeForStream::setServerType(const ServerType servertype)
 
 void QRCodeForStream::LoginOfficial()
 {
+    LogInfo("直播流官服扫码循环开始");
     while (m_stop.load())
     {
         if (av_read_frame(pAVFormatContext, pAVPacket) < 0)
         {
+            LogWarning("读取直播流帧失败或直播已中断");
             ret = ScanRet::LIVESTOP;
             break;
         }
@@ -66,6 +69,7 @@ void QRCodeForStream::LoginOfficial()
         avcodec_send_packet(pAVCodecContext, pAVPacket);
         if (pAVFrame == nullptr)
         {
+            LogError("直播流解码帧分配失败");
             std::cerr << "Error allocating frame" << std::endl;
             ret = ScanRet::LIVESTOP;
             break;
@@ -100,6 +104,8 @@ void QRCodeForStream::LoginOfficial()
                 {
                     return;
                 }
+                LogInfo("直播流识别到二维码，gameType=" + ToString(gameType) +
+                        ", ticket=" + MaskSensitive(ticket));
                 if (mtx.try_lock())
                 {
                     if (!m_stop.load())
@@ -113,15 +119,19 @@ void QRCodeForStream::LoginOfficial()
                         nlohmann::json config = nlohmann::json::parse(m_config->getConfig());
                         if (config["auto_login"])
                         {
+                            LogInfo("已开启自动登录，继续确认直播流二维码登录，gameType=" + ToString(gameType));
                             continueLastLogin();
                         }
                         else
                         {
+                            LogInfo("等待用户确认直播流二维码登录，gameType=" + ToString(gameType));
                             Q_EMIT loginConfirm(gameType, false);
                         }
                     }
                     else
                     {
+                        LogWarning("直播流二维码扫码失败，gameType=" + ToString(gameType) +
+                                   ", ticket=" + MaskSensitive(ticket));
                         Q_EMIT loginResults(ScanRet::FAILURE_1);
                     }
                     stop();
@@ -136,10 +146,12 @@ void QRCodeForStream::LoginOfficial()
 
 void QRCodeForStream::LoginBH3BiliBili()
 {
+    LogInfo("直播流崩坏3 B服扫码循环开始");
     while (m_stop.load())
     {
         if (av_read_frame(pAVFormatContext, pAVPacket) < 0)
         {
+            LogWarning("读取直播流帧失败或直播已中断");
             ret = ScanRet::LIVESTOP;
             break;
         }
@@ -150,6 +162,7 @@ void QRCodeForStream::LoginBH3BiliBili()
         avcodec_send_packet(pAVCodecContext, pAVPacket);
         if (pAVFrame == nullptr)
         {
+            LogError("直播流解码帧分配失败");
             std::cerr << "Error allocating frame" << std::endl;
             ret = ScanRet::LIVESTOP;
             break;
@@ -183,6 +196,7 @@ void QRCodeForStream::LoginBH3BiliBili()
                 {
                     return;
                 }
+                LogInfo("直播流识别到崩坏3 B服二维码，ticket=" + MaskSensitive(ticket));
                 if (mtx.try_lock())
                 {
                     if (!m_stop.load())
@@ -196,15 +210,19 @@ void QRCodeForStream::LoginBH3BiliBili()
                         nlohmann::json config = nlohmann::json::parse(m_config->getConfig());
                         if (config["auto_login"])
                         {
+                            LogInfo("已开启自动登录，继续确认直播流崩坏3 B服二维码登录");
                             continueLastLogin();
                         }
                         else
                         {
+                            LogInfo("等待用户确认直播流崩坏3 B服二维码登录");
                             Q_EMIT loginConfirm(GameType::Honkai3_BiliBili, false);
                         }
                     }
                     else
                     {
+                        LogWarning("直播流崩坏3 B服二维码扫码失败，ticket=" + MaskSensitive(ticket) +
+                                   ", result=" + ToString(ret));
                         Q_EMIT loginResults(ret);
                     }
                     stop();
@@ -241,6 +259,8 @@ void QRCodeForStream::stop()
 void QRCodeForStream::setUrl(const std::string& url, const std::map<std::string, std::string> heard)
 {
     streamUrl = url;
+    LogInfo("设置直播流地址，linkLength=" + std::to_string(streamUrl.length()) +
+            ", headerCount=" + std::to_string(heard.size()));
     for (const auto& it : heard)
     {
         av_dict_set(&pAvdictionary, it.first.c_str(), it.second.c_str(), 0);
@@ -255,14 +275,17 @@ void QRCodeForStream::setUrl(const std::string& url, const std::map<std::string,
 
 auto QRCodeForStream::init() -> bool
 {
+    LogInfo("开始初始化直播流，linkLength=" + std::to_string(streamUrl.length()));
     pAVFormatContext = avformat_alloc_context();
     if (avformat_open_input(&pAVFormatContext, streamUrl.c_str(), NULL, &pAvdictionary) != 0)
     {
+        LogError("打开直播流失败");
         std::cerr << "Error opening input file" << std::endl;
         return false;
     }
     if (avformat_find_stream_info(pAVFormatContext, NULL) < 0)
     {
+        LogError("读取直播流信息失败");
         std::cerr << "Error finding stream information" << std::endl;
         return false;
     }
@@ -277,6 +300,7 @@ auto QRCodeForStream::init() -> bool
     }
     if (videoStream == nullptr)
     {
+        LogError("直播流中未找到视频流");
         std::cerr << "No video stream found" << std::endl;
         return false;
     }
@@ -284,6 +308,7 @@ auto QRCodeForStream::init() -> bool
     const AVCodec* decoder{ avcodec_find_decoder(videoStream->codecpar->codec_id) };
     if (decoder == nullptr)
     {
+        LogError("直播流视频解码器未找到");
         std::cerr << "Codec not found" << std::endl;
         return false;
     }
@@ -291,10 +316,15 @@ auto QRCodeForStream::init() -> bool
     avcodec_parameters_to_context(pAVCodecContext, videoStream->codecpar);
     if (avcodec_open2(pAVCodecContext, decoder, NULL) < 0)
     {
+        LogError("打开直播流视频解码器失败");
         std::cerr << "Error opening codec" << std::endl;
         return false;
     }
     setStreamHW();
+    LogInfo("直播流初始化成功，sourceWidth=" + std::to_string(pAVCodecContext->width) +
+            ", sourceHeight=" + std::to_string(pAVCodecContext->height) +
+            ", scanWidth=" + std::to_string(videoStreamWidth) +
+            ", scanHeight=" + std::to_string(videoStreamHeight));
     pSwsContext = sws_getContext(
         pAVCodecContext->width, pAVCodecContext->height, pAVCodecContext->pix_fmt,
         videoStreamWidth, videoStreamHeight, AV_PIX_FMT_BGR24, SWS_BILINEAR, NULL, NULL, NULL);
@@ -305,6 +335,9 @@ auto QRCodeForStream::init() -> bool
 
 void QRCodeForStream::continueLastLogin()
 {
+    LogInfo("继续确认直播流二维码登录，serverType=" + ToString(servertype) +
+            ", gameType=" + ToString(gameType) +
+            ", ticket=" + MaskSensitive(lastTicket));
     switch (servertype)
     {
         using enum ServerType;
@@ -313,10 +346,12 @@ void QRCodeForStream::continueLastLogin()
         bool b = ConfirmQRLogin(confirmUrl, uid, gameToken, lastTicket, gameType);
         if (b)
         {
+            LogInfo("直播流官服二维码登录确认成功，gameType=" + ToString(gameType));
             Q_EMIT loginResults(ScanRet::SUCCESS);
         }
         else
         {
+            LogWarning("直播流官服二维码登录确认失败，gameType=" + ToString(gameType));
             Q_EMIT loginResults(ScanRet::FAILURE_2);
         }
     }
@@ -324,6 +359,7 @@ void QRCodeForStream::continueLastLogin()
     case BH3_BiliBili:
     {
         ret = scanConfirm(lastTicket, uid, gameToken, m_name, confirmUrl);
+        LogInfo("直播流崩坏3 B服二维码登录确认完成，result=" + ToString(ret));
         Q_EMIT loginResults(ret);
     }
     break;
@@ -337,6 +373,7 @@ void QRCodeForStream::run()
     threadPool.setMaxThreadCount(threadNumber);
     m_stop.store(true);
     ret = ScanRet::UNKNOW;
+    LogInfo("直播流扫码线程启动，serverType=" + ToString(servertype));
     //TODO 获取直播流地址放在这里
     if (init())
     {
@@ -354,10 +391,20 @@ void QRCodeForStream::run()
             LoginBH3BiliBili();
             break;
         default:
+            LogWarning("直播流扫码线程遇到未知 serverType=" + ToString(servertype));
             break;
         }
     }
+    else
+    {
+        ret = ScanRet::STREAMERROR;
+        LogError("直播流初始化失败，扫码线程结束");
+    }
     if (ret == ScanRet::LIVESTOP)
+    {
+        emit loginResults(ret);
+    }
+    else if (ret == ScanRet::STREAMERROR)
     {
         emit loginResults(ret);
     }
@@ -376,4 +423,5 @@ void QRCodeForStream::run()
     pAvdictionary = nullptr;
     pAVFrame = nullptr;
     pAVPacket = nullptr;
+    LogInfo("直播流扫码线程结束，result=" + ToString(ret));
 }

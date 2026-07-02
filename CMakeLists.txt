@@ -78,6 +78,8 @@ add_executable(${PROJECT_NAME}
 	"${CMAKE_SOURCE_DIR}/src/UI/WindowLogin.cpp" 
 	"${CMAKE_SOURCE_DIR}/src/UI/WindowGeeTest.h" 
 	"${CMAKE_SOURCE_DIR}/src/UI/WindowGeeTest.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Core/AsyncLogger.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Core/AsyncLogger.h"
 	"${CMAKE_SOURCE_DIR}/src/Core/CryptoKit.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Core/CryptoKit.h"
 	"${CMAKE_SOURCE_DIR}/src/Core/LiveStreamLink.cpp"

@@ -7,6 +7,8 @@
 #include <QStyleHints>
 #include <opencv2/core/utils/logger.hpp>
 
+#include "AsyncLogger.h"
+
 static std::mutex mtx;
 
 static bool isOpen()
@@ -49,10 +51,14 @@ int main(int argc, char* argv[])
     SetConsoleOutputCP(utf8);
     SetUnhandledExceptionFilter(ExceptionFilter);
     cv::utils::logging::setLogLevel(cv::utils::logging::LOG_LEVEL_ERROR);
+    AsyncLogger::instance().start();
+    LogInfo("程序启动");
     QApplication a(argc, argv);
     QApplication::styleHints()->setColorScheme(Qt::ColorScheme::Light);
     if (isOpen())
     {
+        LogWarning("检测到已有程序实例，当前实例退出");
+        AsyncLogger::instance().stop();
         HWND hwnd = FindWindowW(NULL, L"MHY扫码器");
         if (hwnd == NULL)
         {
@@ -69,7 +75,13 @@ int main(int argc, char* argv[])
         SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
         return -1;
     }
-    WindowMain w;
-    w.show();
-    return a.exec();
+    int result = 0;
+    {
+        WindowMain w;
+        w.show();
+        result = a.exec();
+    }
+    LogInfo("程序退出，退出码: " + std::to_string(result));
+    AsyncLogger::instance().stop();
+    return result;
 }
