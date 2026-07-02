@@ -164,7 +164,7 @@ void QRCodeForScreen::LoginBH3BiliBili()
                     mtx.unlock();
                     return;
                 }
-                if (ret = scanCheck(ticket); ret == ScanRet::SUCCESS)
+                if (ret = scanCheck(ticket, scanUrl); ret == ScanRet::SUCCESS)
                 {
                     lastTicket = ticket;
                     nlohmann::json config = nlohmann::json::parse(m_config->getConfig());
@@ -211,7 +211,7 @@ void QRCodeForScreen::continueLastLogin()
     break;
     case BH3_BiliBili:
     {
-        ret = scanConfirm(lastTicket, uid, gameToken, m_name);
+        ret = scanConfirm(lastTicket, uid, gameToken, m_name, confirmUrl);
         Q_EMIT loginResults(ret);
     }
     break;

@@ -17,7 +17,13 @@ LiveBili::LiveBili(const std::string& roomID) :
 LiveStreamInfo LiveBili::GetLiveStreamInfo()
 {
     // 获取房间初始化信息
-    auto r = cpr::Get(cpr::Url{ std::format("{}?id={}", api::live::bili::room_init.c_str(), roomID) });
+    const cpr::Header headers = {
+        { "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36" }
+    };
+    auto r = cpr::Get(
+        cpr::Url{ std::format("{}?id={}", api::live::bili::room_init.c_str(), roomID) },
+        headers);
     if (r.error || r.status_code != 200 || r.text.empty())
     {
         return { LiveStreamStatus::Error, "" };
@@ -45,10 +51,11 @@ LiveStreamInfo LiveBili::GetLiveStreamInfo()
             return { LiveStreamStatus::NotLive, "" };
         }
         // 更新真实房间ID
-        if (data.contains("room_id"))
+        if (!data.contains("room_id"))
         {
-            realRoomID = std::to_string(data["room_id"].get<int>());
+            return { LiveStreamStatus::Error, "" };
         }
+        realRoomID = std::to_string(data["room_id"].get<int>());
 
         std::string link = GetLinkByRealRoomID(realRoomID);
         if (link.empty())

@@ -353,7 +353,7 @@ inline std::tuple<int, std::string, std::string, std::string> GetBH3ExternalLogi
              j["data"]["combo_id"].get<std::string>() };
 }
 
-inline ScanRet scanCheck(const std::string& ticket)
+inline ScanRet scanCheck(const std::string& ticket, const std::string_view scanUrl = api::mhy::bh3::qrcode_scan)
 {
     const std::string body = nlohmann::json{
         { "app_id", "1" },
@@ -363,7 +363,7 @@ inline ScanRet scanCheck(const std::string& ticket)
     }.dump();
 
     const auto response = cpr::Post(
-        cpr::Url{ api::mhy::bh3::qrcode_scan },
+        cpr::Url{ scanUrl },
         cpr::Body{ body },
         cpr::Header{ { "Content-Type", "application/json" } });
 
@@ -371,7 +371,7 @@ inline ScanRet scanCheck(const std::string& ticket)
     return j.value("retcode", -1) == 0 ? ScanRet::SUCCESS : ScanRet::FAILURE_1;
 }
 
-inline ScanRet scanConfirm(const std::string& ticket, const std::string& uid, const std::string& access_key, const std::string& name)
+inline ScanRet scanConfirm(const std::string& ticket, const std::string& uid, const std::string& access_key, const std::string& name, const std::string_view confirmUrl = api::mhy::bh3::qrcode_confirm)
 {
     auto [code, open_id, combo_token, combo_id] = GetBH3ExternalLoginInfo(uid, access_key);
     if (code != 0)
@@ -416,7 +416,7 @@ inline ScanRet scanConfirm(const std::string& ticket, const std::string& uid, co
 #endif
 
     const auto response = cpr::Post(
-        cpr::Url{ api::mhy::bh3::qrcode_confirm },
+        cpr::Url{ confirmUrl },
         cpr::Header{ { "Content-Type", "application/json" } },
         cpr::Body{ postBody.dump() });
 
