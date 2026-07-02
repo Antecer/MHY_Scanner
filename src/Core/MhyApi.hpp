@@ -332,7 +332,7 @@ inline std::tuple<int, std::string, std::string> GetStokenByGameToken(
     reqHeaders["DS"] = DataSignAlgorithmVersionGen2(body, "");
 
     const auto response = cpr::Post(
-        cpr::Url{ api::mhy::takumi::game_token_stoken },
+        cpr::Url{ api::mhy::passport::game_token_stoken },
         cpr::Body{ body },
         cpr::Header{ reqHeaders });
 

@@ -108,7 +108,6 @@ namespace takumi
 constexpr compile_string base{ "https://api-takumi.mihoyo.com" };
 constexpr auto multi_token = base + compile_string{ "/auth/api/getMultiTokenByLoginTicket" };
 constexpr auto game_token = base + compile_string{ "/auth/api/getGameToken" };
-constexpr auto game_token_stoken = base + compile_string{ "/account/ma-cn-session/app/getTokenByGameToken" };
 }
 
 namespace passport
@@ -116,6 +115,7 @@ namespace passport
 constexpr compile_string base{ "https://passport-api.mihoyo.com" };
 constexpr auto create_captcha = base + compile_string{ "/account/ma-cn-verifier/verifier/createLoginCaptcha" };
 constexpr auto login_by_mobile_captcha = base + compile_string{ "/account/ma-cn-passport/app/loginByMobileCaptcha" };
+constexpr auto game_token_stoken = base + compile_string{ "/account/ma-cn-session/app/getTokenByGameToken" };
 }
 
 namespace mys
