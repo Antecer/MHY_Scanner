@@ -58,8 +58,9 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11.6
 
-      - name: Cache vcpkg installed tree
-        uses: actions/cache@v4
+      - name: Restore vcpkg installed tree
+        id: restore-vcpkg-tree
+        uses: actions/cache/restore@v4
         with:
           path: |
             ${{ github.workspace }}\vcpkg_installed
@@ -71,6 +72,16 @@ jobs:
       - name: Install vcpkg dependencies
         run: |
           vcpkg install --triplet ${{ env.VCPKG_DEFAULT_TRIPLET }} --x-install-root=${{ github.workspace }}\vcpkg_installed
+
+      - name: Save vcpkg installed tree before build
+        if: steps.restore-vcpkg-tree.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: |
+            ${{ github.workspace }}\vcpkg_installed
+            ${{ env.VCPKG_ROOT }}\downloads
+          key: ${{ steps.restore-vcpkg-tree.outputs.cache-primary-key }}
 
       - name: Configure CMake
         run: |
