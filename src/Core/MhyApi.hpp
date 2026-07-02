@@ -23,7 +23,7 @@
 #include "AsyncLogger.h"
 
 static const std::string device_id{ CreateUUID::CreateUUID4() };
-static GameType loginType{ GameType::TearsOfThemis };
+static GameType loginType{ GameType::Honkai3 };
 
 inline void ReplaceAll(std::string& value, const std::string_view from, const std::string_view to)
 {
@@ -58,6 +58,30 @@ inline std::string NormalizeLoginQrcodeUrl(std::string url)
     return url;
 }
 
+inline std::string ExtractUrlQueryValue(const std::string_view url, const std::string_view key)
+{
+    const std::string pattern{ std::string(key) + "=" };
+    const std::size_t begin = url.find(pattern);
+    if (begin == std::string_view::npos)
+    {
+        return {};
+    }
+
+    const std::size_t valueBegin = begin + pattern.size();
+    std::size_t valueEnd = url.find('&', valueBegin);
+    if (valueEnd == std::string_view::npos)
+    {
+        valueEnd = url.size();
+    }
+    return std::string{ url.substr(valueBegin, valueEnd - valueBegin) };
+}
+
+struct LoginQRCodeInfo
+{
+    std::string url{};
+    std::string ticket{};
+};
+
 [[nodiscard]] inline std::string DataSignAlgorithmVersionGen1()
 {
     return "";
@@ -91,7 +115,7 @@ inline std::string Encrypt(const std::string_view source)
 
 inline cpr::Header GetRequestHeader()
 {
-    static cpr::Header headers{
+    return cpr::Header{
         { "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) miHoYoBBS/2.76.1" },
         { "Accept", "application/json" },
         { "x-rpc-app_id", "bll8iq97cem8" },
@@ -102,71 +126,98 @@ inline cpr::Header GetRequestHeader()
         { "x-rpc-game_biz", "bbs_cn" },
         { "x-rpc-sdk_version", "2.16.0" }
     };
-    return headers;
 }
 
-inline std::string GetLoginQrcodeUrl(const GameType type = loginType)
+inline cpr::Header GetQRCodeRequestHeader()
 {
-    LogInfo("请求账号登录二维码，gameType=" + ToString(type));
+    return cpr::Header{
+        { "User-Agent", "okhttp/4.9.3" },
+        { "Accept", "application/json" },
+        { "Content-Type", "application/json" },
+        { "x-rpc-aigis", "" },
+        { "x-rpc-app_id", "bll8iq97cem8" },
+        { "x-rpc-app_version", "2.76.1" },
+        { "x-rpc-client_type", "4" },
+        { "x-rpc-device_id", device_id },
+        { "x-rpc-device_name", "Xiaomi MI 6" },
+        { "x-rpc-device_model", "MI 6" },
+        { "x-rpc-game_biz", "bbs_cn" },
+        { "x-rpc-sys_version", "12" }
+    };
+}
+
+inline LoginQRCodeInfo CreateLoginQRCode()
+{
+    LogInfo("请求账号登录二维码，gameType=" + ToString(loginType));
+    const std::string appId{ std::to_string(static_cast<int>(loginType)) };
     auto res = cpr::Post(
         cpr::Url{ api::mhy::hk4e::qrcode_fetch },
         cpr::Body{ nlohmann::json{
-            { "app_id", static_cast<int>(type) },
+            { "app_id", appId },
             { "device", device_id } }
                        .dump() },
         cpr::Header{ { "Content-Type", "application/json" } });
 
     if (res.error || res.status_code != 200 || res.text.empty())
     {
-        LogWarning("账号登录二维码请求异常，gameType=" + ToString(type) +
+        LogWarning("账号登录二维码请求异常，gameType=" + ToString(loginType) +
                    ", status=" + std::to_string(res.status_code) +
                    ", error=" + res.error.message);
         return {};
     }
 
-    std::string qrcodeUrl;
+    LoginQRCodeInfo result{};
     try
     {
         const auto data = nlohmann::json::parse(res.text);
         const int retcode = data.value("retcode", -1);
         if (retcode != 0)
         {
-            LogWarning("账号登录二维码请求失败，gameType=" + ToString(type) +
+            LogWarning("账号登录二维码请求失败，gameType=" + ToString(loginType) +
                        ", retcode=" + std::to_string(retcode));
             return {};
         }
-        qrcodeUrl = data["data"]["url"].get<std::string>();
+        result.url = data["data"]["url"].get<std::string>();
     }
     catch (const std::exception& e)
     {
-        LogError("账号登录二维码响应解析异常，gameType=" + ToString(type) +
+        LogError("账号登录二维码响应解析异常，gameType=" + ToString(loginType) +
                  ", error=" + e.what());
         return {};
     }
 
-    const std::string normalizedUrl{ NormalizeLoginQrcodeUrl(std::move(qrcodeUrl)) };
-    if (normalizedUrl.size() < 24)
+    result.url = NormalizeLoginQrcodeUrl(std::move(result.url));
+    result.ticket = ExtractUrlQueryValue(result.url, "ticket");
+    if (result.url.empty() || result.ticket.empty())
     {
-        LogWarning("账号登录二维码 URL 异常，gameType=" + ToString(type) +
-                   ", length=" + std::to_string(normalizedUrl.size()));
+        LogWarning("账号登录二维码响应缺少 URL 或 ticket，gameType=" + ToString(loginType) +
+                   ", urlLength=" +
+                   std::to_string(result.url.size()) +
+                   ", ticketLength=" + std::to_string(result.ticket.size()));
         return {};
     }
 
-    const std::string ticket{ normalizedUrl.substr(normalizedUrl.size() - 24) };
-    LogInfo("账号登录二维码已生成，gameType=" + ToString(type) +
-            ", urlLength=" + std::to_string(normalizedUrl.size()) +
-            ", ticket=" + MaskSensitive(ticket));
-    return normalizedUrl;
+    LogInfo("账号登录二维码已生成，gameType=" + ToString(loginType) +
+            ", urlLength=" + std::to_string(result.url.size()) +
+            ", ticket=" + MaskSensitive(result.ticket));
+    return result;
+}
+
+inline std::string GetLoginQrcodeUrl(const GameType type = loginType)
+{
+    loginType = type;
+    return CreateLoginQRCode().url;
 }
 
 inline std::tuple<LoginQRCodeState, std::string, std::string> GetQRCodeState(
     const std::string_view ticket,
     const GameType type = loginType)
 {
+    const std::string appId{ std::to_string(static_cast<int>(type)) };
     const auto response = cpr::Post(
         cpr::Url{ api::mhy::hk4e::qrcode_query },
         cpr::Body{ nlohmann::json{
-            { "app_id", static_cast<int>(type) },
+            { "app_id", appId },
             { "device", device_id },
             { "ticket", ticket } }
                        .dump() },
@@ -263,20 +314,71 @@ inline std::tuple<int, std::string, std::string> GetStokenByGameToken(
     const std::string_view uid,
     const std::string_view game_token)
 {
+    LogInfo("通过 game_token 换取 STOKEN，uid=" + MaskSensitive(uid));
+    long long accountId{};
+    try
+    {
+        accountId = std::stoll(std::string(uid));
+    }
+    catch (const std::exception& e)
+    {
+        LogError("通过 game_token 换取 STOKEN 前置参数异常，uid=" + MaskSensitive(uid) +
+                 ", error=" + e.what());
+        return { -1, {}, {} };
+    }
+
+    const std::string body{ nlohmann::json{ { "account_id", accountId }, { "game_token", std::string(game_token) } }.dump() };
+    cpr::Header reqHeaders{ GetQRCodeRequestHeader() };
+    reqHeaders["DS"] = DataSignAlgorithmVersionGen2(body, "");
+
     const auto response = cpr::Post(
         cpr::Url{ api::mhy::takumi::game_token_stoken },
-        cpr::Body{ nlohmann::json{ { "account_id", std::stoi(uid.data()) }, { "game_token", game_token } }.dump() },
-        GetRequestHeader());
+        cpr::Body{ body },
+        cpr::Header{ reqHeaders });
 
-    const auto j = nlohmann::json::parse(response.text);
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("通过 game_token 换取 STOKEN 请求异常，uid=" + MaskSensitive(uid) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+        return { -1, {}, {} };
+    }
+
+    nlohmann::json j;
+    try
+    {
+        j = nlohmann::json::parse(response.text);
+    }
+    catch (const std::exception& e)
+    {
+        LogError("通过 game_token 换取 STOKEN 响应解析异常，uid=" + MaskSensitive(uid) +
+                 ", error=" + e.what());
+        return { -1, {}, {} };
+    }
     const int retcode = j.value("retcode", -1);
 
     if (retcode != 0)
+    {
+        LogWarning("通过 game_token 换取 STOKEN 失败，uid=" + MaskSensitive(uid) +
+                   ", retcode=" + std::to_string(retcode) +
+                   ", message=" + j.value("message", ""));
         return { retcode, {}, {} };
+    }
 
-    return { 0,
-             j["data"]["user_info"]["mid"].get<std::string>(),
-             j["data"]["token"]["token"].get<std::string>() };
+    try
+    {
+        const std::string mid{ j["data"]["user_info"]["mid"].get<std::string>() };
+        const std::string stoken{ j["data"]["token"]["token"].get<std::string>() };
+        LogInfo("通过 game_token 换取 STOKEN 成功，uid=" + MaskSensitive(uid) +
+                ", mid=" + MaskSensitive(mid));
+        return { 0, mid, stoken };
+    }
+    catch (const std::exception& e)
+    {
+        LogError("通过 game_token 换取 STOKEN 数据结构异常，uid=" + MaskSensitive(uid) +
+                 ", error=" + e.what());
+        return { -1, {}, {} };
+    }
 }
 
 inline std::tuple<int, std::string> GetGameTokenByStoken(

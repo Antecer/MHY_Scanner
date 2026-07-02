@@ -257,14 +257,21 @@ void WindowLogin::Initconnect()
     });
 
     connect(this, &WindowLogin::QrcodeLoginResult, this, [this](bool result) {
+        QrcodeTimer->stop();
         if (result)
         {
-            QrcodeTimer->stop();
         }
         else
         {
-            QRCodeQImage = CV_8UC1_MatToQImage(QrcodeMat - cv::Scalar(200));
-            QRCodelabel->setPixmap(QPixmap::fromImage(QRCodeQImage));
+            if (!QrcodeMat.empty())
+            {
+                QRCodeQImage = CV_8UC1_MatToQImage(QrcodeMat - cv::Scalar(200));
+                QRCodelabel->setPixmap(QPixmap::fromImage(QRCodeQImage));
+            }
+            else
+            {
+                QRCodelabel->setText("二维码加载失败");
+            }
             UpdateQrcodeButton->setVisible(true);
         }
     });
@@ -524,16 +531,16 @@ void WindowLogin::StartQRCodeLogin()
         QRCodeQImage.fill(255);
         QRCodelabel->setText("二维码加载中");
         AllowDrawQRCode.store(false);
-        const std::string qrcodeString{ GetLoginQrcodeUrl() };
-        if (qrcodeString.size() < 24)
+        const LoginQRCodeInfo qrcodeInfo{ CreateLoginQRCode() };
+        if (qrcodeInfo.url.empty() || qrcodeInfo.ticket.empty())
         {
             LogError("账号登录二维码生成失败，返回 URL 为空或长度异常");
             emit showMessagebox("二维码加载失败，请刷新重试");
             emit QrcodeLoginResult(false);
             return;
         }
-        ticket = std::string{ qrcodeString.data() + qrcodeString.size() - 24, 24 };
-        QrcodeMat = createQrCodeToCvMat(qrcodeString);
+        ticket = qrcodeInfo.ticket;
+        QrcodeMat = createQrCodeToCvMat(qrcodeInfo.url);
         QRCodeQImage = CV_8UC1_MatToQImage(QrcodeMat);
         if (AllowDrawQRCode.load())
         {
@@ -571,6 +578,7 @@ void WindowLogin::CheckQRCodeLoginState()
         else
         {
             emit showMessagebox("获取STOKEN失败！");
+            emit QrcodeLoginResult(false);
         }
         return;
     }
