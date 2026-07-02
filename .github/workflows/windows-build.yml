@@ -8,8 +8,10 @@ on:
 env:
   BUILD_CONFIGURATION: Release
   VCPKG_DEFAULT_TRIPLET: x64-windows
-  INSTALL_DIR: ${{ github.workspace }}\install
-  APP_INSTALL_DIR: ${{ github.workspace }}\install\MHY_Scanner
+  INSTALL_DIR: install
+  APP_INSTALL_DIR: install/MHY_Scanner
+  VCPKG_INSTALLED_DIR: vcpkg_installed
+  VCPKG_DOWNLOADS_DIR: .cache/vcpkg/downloads
   ZIP_NAME: MHY_Scanner_${{ github.ref_name }}.zip
   VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
 
@@ -39,7 +41,7 @@ jobs:
       - name: Cache FFmpeg
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}\.cache\ffmpeg
+          path: .cache/ffmpeg
           key: ffmpeg-${{ runner.os }}-btbn-latest-win64-gpl-shared
 
       - name: Export GitHub Actions cache variables for vcpkg
@@ -63,15 +65,17 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            ${{ github.workspace }}\vcpkg_installed
-            ${{ env.VCPKG_ROOT }}\downloads
+            ${{ env.VCPKG_INSTALLED_DIR }}
+            ${{ env.VCPKG_DOWNLOADS_DIR }}
           key: vcpkg-tree-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
             vcpkg-tree-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-
 
       - name: Install vcpkg dependencies
         run: |
-          vcpkg install --triplet ${{ env.VCPKG_DEFAULT_TRIPLET }} --x-install-root=${{ github.workspace }}\vcpkg_installed
+          $workspace = "${{ github.workspace }}".Replace('\', '/')
+          $env:VCPKG_DOWNLOADS = "$workspace/${{ env.VCPKG_DOWNLOADS_DIR }}"
+          vcpkg install --triplet ${{ env.VCPKG_DEFAULT_TRIPLET }} --x-install-root="$workspace/${{ env.VCPKG_INSTALLED_DIR }}"
 
       - name: Save vcpkg installed tree before build
         if: steps.restore-vcpkg-tree.outputs.cache-hit != 'true'
@@ -79,20 +83,25 @@ jobs:
         continue-on-error: true
         with:
           path: |
-            ${{ github.workspace }}\vcpkg_installed
-            ${{ env.VCPKG_ROOT }}\downloads
+            ${{ env.VCPKG_INSTALLED_DIR }}
+            ${{ env.VCPKG_DOWNLOADS_DIR }}
           key: ${{ steps.restore-vcpkg-tree.outputs.cache-primary-key }}
 
       - name: Configure CMake
         run: |
+          $workspace = "${{ github.workspace }}".Replace('\', '/')
+          $vcpkgRoot = "${{ env.VCPKG_ROOT }}".Replace('\', '/')
+          $vcpkgInstalled = "$workspace/${{ env.VCPKG_INSTALLED_DIR }}"
+          $installDir = "$workspace/${{ env.INSTALL_DIR }}"
+          $appInstallDir = "$workspace/${{ env.APP_INSTALL_DIR }}"
           cmake -S . -B build -G Ninja `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_CONFIGURATION }} `
-          -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}\scripts\buildsystems\vcpkg.cmake `
+          -DCMAKE_TOOLCHAIN_FILE="$vcpkgRoot/scripts/buildsystems/vcpkg.cmake" `
           -DVCPKG_TARGET_TRIPLET=${{ env.VCPKG_DEFAULT_TRIPLET }} `
-          -DVCPKG_INSTALLED_DIR=${{ github.workspace }}\vcpkg_installed `
+          -DVCPKG_INSTALLED_DIR="$vcpkgInstalled" `
           -DVCPKG_MANIFEST_INSTALL=OFF `
-          -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}\install `
-          -DInstall_Directory=${{ env.APP_INSTALL_DIR }} `
+          -DCMAKE_INSTALL_PREFIX="$installDir" `
+          -DInstall_Directory="$appInstallDir" `
           -DUNIT_TESTS=OFF `
           -DDEV=OFF
 
@@ -106,21 +115,21 @@ jobs:
 
       - name: Copy vcpkg runtime DLLs
         run: |
-          $source = "${{ github.workspace }}\vcpkg_installed\${{ env.VCPKG_DEFAULT_TRIPLET }}\bin"
+          $source = "${{ env.VCPKG_INSTALLED_DIR }}/${{ env.VCPKG_DEFAULT_TRIPLET }}/bin"
           $target = "${{ env.APP_INSTALL_DIR }}"
           if (Test-Path $source) {
-            Copy-Item "$source\*.dll" -Destination $target -Force
+            Copy-Item "$source/*.dll" -Destination $target -Force
           }
 
       - name: Create ZIP
         run: |
-          powershell Compress-Archive -Path "${{ env.INSTALL_DIR }}\*" -DestinationPath "${{ github.workspace }}\${{ env.ZIP_NAME }}"
+          powershell Compress-Archive -Path "${{ env.INSTALL_DIR }}/*" -DestinationPath "${{ env.ZIP_NAME }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ZIP_NAME }}
-          path: ${{ github.workspace }}\${{ env.ZIP_NAME }}
+          path: ${{ env.ZIP_NAME }}
           retention-days: 5
 
       - name: Create GitHub Release
@@ -128,6 +137,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
-          files: ${{ github.workspace }}\${{ env.ZIP_NAME }}
+          files: ${{ env.ZIP_NAME }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

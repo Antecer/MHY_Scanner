@@ -157,10 +157,11 @@ endif()
 if(NOT DEFINED Install_Directory)
 	set(Install_Directory "${CMAKE_INSTALL_PREFIX}/${PROJECT_NAME}_${PROJECT_VERSION}")
 endif()
+file(TO_CMAKE_PATH "${Install_Directory}" Install_Directory)
 
-install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${Install_Directory})
+install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION "${Install_Directory}")
 
-install(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION ${Install_Directory})
+install(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION "${Install_Directory}")
 
 set(QT_DLL_FILES
 	${QT6_INSTALL_PREFIX}/bin/Qt6Core.dll
@@ -173,7 +174,7 @@ install(
 	${QT_DLL_FILES}
 	${FFMPEG_DLL_FILES}
 	DESTINATION 
-	${Install_Directory}
+	"${Install_Directory}"
 )
 
 install(
@@ -183,19 +184,19 @@ install(
 	${QT6_INSTALL_PREFIX}/plugins/platforms/qoffscreen.dll
 	${QT6_INSTALL_PREFIX}/plugins/platforms/qwindows.dll
 	DESTINATION
-	${Install_Directory}/plugins/platforms
+	"${Install_Directory}/plugins/platforms"
 )
 
 install(
 	FILES
 	${QT6_INSTALL_PREFIX}/plugins/styles/qmodernwindowsstyle.dll
 	DESTINATION
-	${Install_Directory}/plugins/styles
+	"${Install_Directory}/plugins/styles"
 )
 
 install(
 	DIRECTORY
 	ScanModel
 	DESTINATION
-	${Install_Directory}
+	"${Install_Directory}"
 )
