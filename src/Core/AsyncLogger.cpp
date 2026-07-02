@@ -235,7 +235,7 @@ std::string ToString(ServerType serverType)
         return "Official";
     case ServerType::BH3_BiliBili:
         return "BH3_BiliBili";
-    case ServerType::UNKNOW:
+    case static_cast<ServerType>(0):
         return "Unknown";
     default:
         return "ServerType(" + std::to_string(static_cast<int>(serverType)) + ")";
