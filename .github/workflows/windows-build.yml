@@ -7,9 +7,11 @@ on:
   workflow_dispatch:
 env:
   BUILD_CONFIGURATION: Release
+  VCPKG_DEFAULT_TRIPLET: x64-windows
   INSTALL_DIR: ${{ github.workspace }}\install
+  APP_INSTALL_DIR: ${{ github.workspace }}\install\MHY_Scanner
   ZIP_NAME: MHY_Scanner_${{ github.ref_name }}.zip
-  VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-cache,readwrite
+  VCPKG_BINARY_SOURCES: clear;x-gha,readwrite
 
 permissions:
   contents: write
@@ -34,24 +36,52 @@ jobs:
           arch: 'win64_msvc2022_64'
           cache: true
 
-      - name: Cache
+      - name: Cache FFmpeg
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-
+          path: ${{ github.workspace }}\.cache\ffmpeg
+          key: ffmpeg-${{ runner.os }}-btbn-latest-win64-gpl-shared
+
+      - name: Export GitHub Actions cache variables for vcpkg
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
+        uses: lukka/run-vcpkg@v11.6
+
+      - name: Cache vcpkg installed tree
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}\vcpkg_installed
+            ${{ env.VCPKG_ROOT }}\downloads
+          key: vcpkg-tree-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-tree-${{ runner.os }}-${{ env.VCPKG_DEFAULT_TRIPLET }}-
+
+      - name: Install vcpkg dependencies
+        run: |
+          vcpkg install --triplet ${{ env.VCPKG_DEFAULT_TRIPLET }} --x-install-root=${{ github.workspace }}\vcpkg_installed
 
       - name: Configure CMake
         run: |
-          cmake -B build `
+          cmake -S . -B build -G Ninja `
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_CONFIGURATION }} `
           -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}\scripts\buildsystems\vcpkg.cmake `
-          -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+          -DVCPKG_TARGET_TRIPLET=${{ env.VCPKG_DEFAULT_TRIPLET }} `
+          -DVCPKG_INSTALLED_DIR=${{ github.workspace }}\vcpkg_installed `
+          -DVCPKG_MANIFEST_INSTALL=OFF `
           -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}\install `
+          -DInstall_Directory=${{ env.APP_INSTALL_DIR }} `
           -DUNIT_TESTS=OFF `
           -DDEV=OFF
 
@@ -62,6 +92,14 @@ jobs:
       - name: Install
         run: |
           cmake --install build --config ${{ env.BUILD_CONFIGURATION }}
+
+      - name: Copy vcpkg runtime DLLs
+        run: |
+          $source = "${{ github.workspace }}\vcpkg_installed\${{ env.VCPKG_DEFAULT_TRIPLET }}\bin"
+          $target = "${{ env.APP_INSTALL_DIR }}"
+          if (Test-Path $source) {
+            Copy-Item "$source\*.dll" -Destination $target -Force
+          }
 
       - name: Create ZIP
         run: |

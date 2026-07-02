@@ -1,13 +1,15 @@
-﻿set(FFMPEG_URL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip")
-set(FFMPEG_ARCHIVE "ffmpeg.zip")
-set(FFMPEG_DIR "${CMAKE_BINARY_DIR}/ffmpeg-master-latest-win64-gpl-shared")
+set(FFMPEG_URL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip")
+set(FFMPEG_PACKAGE_NAME "ffmpeg-master-latest-win64-gpl-shared")
+set(FFMPEG_CACHE_DIR "${CMAKE_SOURCE_DIR}/.cache/ffmpeg" CACHE PATH "Directory used to cache the FFmpeg archive and extracted files")
+set(FFMPEG_ARCHIVE "${FFMPEG_CACHE_DIR}/${FFMPEG_PACKAGE_NAME}.zip")
+set(FFMPEG_DIR "${FFMPEG_CACHE_DIR}/${FFMPEG_PACKAGE_NAME}")
 
-set(FFMPEG_ARCHIVE "${CMAKE_BINARY_DIR}/${FFMPEG_ARCHIVE}")
+file(MAKE_DIRECTORY "${FFMPEG_CACHE_DIR}")
 
 if(NOT EXISTS ${FFMPEG_DIR})
 	message(STATUS "Downloading FFmpeg...")
 	file(DOWNLOAD ${FFMPEG_URL} ${FFMPEG_ARCHIVE} SHOW_PROGRESS)
-	file(ARCHIVE_EXTRACT INPUT ${FFMPEG_ARCHIVE} DESTINATION "${CMAKE_BINARY_DIR}")
+	file(ARCHIVE_EXTRACT INPUT ${FFMPEG_ARCHIVE} DESTINATION "${FFMPEG_CACHE_DIR}")
 endif()
 
 set(FFMPEG_LIBS

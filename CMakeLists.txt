@@ -25,26 +25,29 @@ if(MSVC)
 	endif()
 endif()
 
-include(FetchContent)
 include(ExternalProject)
 include(cmake/install_ffmpeg.cmake)
 include(cmake/build_QR-Code-generator.cmake)
 
-FetchContent_Declare(
-	nlohmann_json
-	GIT_REPOSITORY https://github.com/nlohmann/json.git
-	GIT_TAG v3.12.0
-)
-FetchContent_MakeAvailable(nlohmann_json)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 find_package(unofficial-webview2 CONFIG REQUIRED)
 
 find_package(cpr CONFIG REQUIRED)
 
-find_package(OpenCV REQUIRED opencv_world)
+find_package(OpenCV REQUIRED
+	core
+	dnn
+	highgui
+	imgcodecs
+	imgproc
+	wechat_qrcode
+)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-set(OPENSSL_USE_STATIC_LIBS TRUE)
+if(DEFINED VCPKG_TARGET_TRIPLET AND VCPKG_TARGET_TRIPLET MATCHES "static")
+	set(OPENSSL_USE_STATIC_LIBS TRUE)
+endif()
 find_package(OpenSSL REQUIRED)
 
 find_package(Qt6 COMPONENTS Widgets REQUIRED)
@@ -151,7 +154,9 @@ if(UNIT_TESTS)
 endif()
 
 # install
-set(Install_Directory "${CMAKE_INSTALL_PREFIX}/${PROJECT_NAME}_${PROJECT_VERSION}")
+if(NOT DEFINED Install_Directory)
+	set(Install_Directory "${CMAKE_INSTALL_PREFIX}/${PROJECT_NAME}_${PROJECT_VERSION}")
+endif()
 
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${Install_Directory})
 

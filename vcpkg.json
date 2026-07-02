@@ -7,8 +7,20 @@
 			"name": "cpr"
 		},
 		{
+			"name": "nlohmann-json"
+		},
+		{
 			"name": "opencv",
-			"features": [ "world", "contrib" ]
+			"default-features": false,
+			"features": [
+				"contrib",
+				"dnn",
+				"highgui",
+				"jpeg",
+				"png",
+				"quirc",
+				"win32ui"
+			]
 		},
 		{
 			"name": "openssl"
