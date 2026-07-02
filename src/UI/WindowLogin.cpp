@@ -553,8 +553,8 @@ void WindowLogin::StartQRCodeLogin()
 
 void WindowLogin::CheckQRCodeLoginState()
 {
-    auto [state, uid, game_token] = GetQRCodeState(ticket);
-    switch (state)
+    const LoginQRCodeSession session{ GetLoginQRCodeSession(ticket) };
+    switch (session.state)
     {
     case LoginQRCodeState::Init:
     {
@@ -567,17 +567,16 @@ void WindowLogin::CheckQRCodeLoginState()
     break;
     case LoginQRCodeState::Confirmed:
     {
-        auto [code, mid, stoken] = GetStokenByGameToken(uid, game_token);
-        if (code == 0)
+        if (!session.uid.empty() && !session.mid.empty() && !session.stoken.empty())
         {
-            std::string name{ getMysUserName(uid) };
-            emit AddUserInfo(name, stoken, uid, mid, "官服");
+            std::string name{ getMysUserName(session.uid) };
+            emit AddUserInfo(name, session.stoken, session.uid, session.mid, "官服");
             QRCodelabel->setText("登录成功！");
             emit QrcodeLoginResult(true);
         }
         else
         {
-            emit showMessagebox("获取STOKEN失败！");
+            emit showMessagebox("扫码登录未返回可保存的STOKEN！");
             emit QrcodeLoginResult(false);
         }
         return;

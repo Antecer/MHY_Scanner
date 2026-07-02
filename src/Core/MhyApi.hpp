@@ -22,7 +22,24 @@
 #include "TimeStamp.hpp"
 #include "AsyncLogger.h"
 
+inline std::string CreateLowerAndNumberString(const std::size_t length)
+{
+    static constexpr std::string_view chars{ "0123456789abcdefghijklmnopqrstuvwxyz" };
+    std::random_device rd{};
+    std::mt19937 gen{ rd() };
+    std::uniform_int_distribution<std::size_t> dist(0, chars.size() - 1);
+
+    std::string result{};
+    result.reserve(length);
+    for (std::size_t i = 0; i < length; ++i)
+    {
+        result.push_back(chars[dist(gen)]);
+    }
+    return result;
+}
+
 static const std::string device_id{ CreateUUID::CreateUUID4() };
+static const std::string hoyoplay_device_id{ CreateLowerAndNumberString(53) };
 static GameType loginType{ GameType::Honkai3 };
 
 inline void ReplaceAll(std::string& value, const std::string_view from, const std::string_view to)
@@ -43,7 +60,7 @@ inline void ReplaceAll(std::string& value, const std::string_view from, const st
 inline std::string NormalizeLoginQrcodeUrl(std::string url)
 {
     constexpr std::string_view separators[]{ R"(\u0026)", "u0026", "0026" };
-    constexpr std::string_view nextKeys[]{ "app_name=", "bbs=", "biz_key=", "expire=", "ticket=" };
+    constexpr std::string_view nextKeys[]{ "app_name=", "bbs=", "biz_key=", "expire=", "ticket=", "tk=", "token_types=" };
 
     for (const auto separator : separators)
     {
@@ -68,7 +85,7 @@ inline std::string ExtractUrlQueryValue(const std::string_view url, const std::s
     }
 
     const std::size_t valueBegin = begin + pattern.size();
-    std::size_t valueEnd = url.find('&', valueBegin);
+    std::size_t valueEnd = url.find_first_of("&#", valueBegin);
     if (valueEnd == std::string_view::npos)
     {
         valueEnd = url.size();
@@ -80,6 +97,14 @@ struct LoginQRCodeInfo
 {
     std::string url{};
     std::string ticket{};
+};
+
+struct LoginQRCodeSession
+{
+    LoginQRCodeState state{ LoginQRCodeState::Expired };
+    std::string uid{};
+    std::string mid{};
+    std::string stoken{};
 };
 
 [[nodiscard]] inline std::string DataSignAlgorithmVersionGen1()
@@ -146,22 +171,29 @@ inline cpr::Header GetQRCodeRequestHeader()
     };
 }
 
+inline cpr::Header GetHoyoPlayRequestHeader()
+{
+    return cpr::Header{
+        { "User-Agent", "HYPContainer/1.1.4.133" },
+        { "Accept", "application/json" },
+        { "Content-Type", "application/json" },
+        { "x-rpc-app_id", "ddxf5dufpuyo" },
+        { "x-rpc-client_type", "3" },
+        { "x-rpc-device_id", hoyoplay_device_id }
+    };
+}
+
 inline LoginQRCodeInfo CreateLoginQRCode()
 {
-    LogInfo("请求账号登录二维码，gameType=" + ToString(loginType));
-    const std::string appId{ std::to_string(static_cast<int>(loginType)) };
+    LogInfo("请求账号登录二维码");
     auto res = cpr::Post(
-        cpr::Url{ api::mhy::hk4e::qrcode_fetch },
-        cpr::Body{ nlohmann::json{
-            { "app_id", appId },
-            { "device", device_id } }
-                       .dump() },
-        cpr::Header{ { "Content-Type", "application/json" } });
+        cpr::Url{ api::mhy::passport::create_qr_login },
+        cpr::Body{ nlohmann::json::object().dump() },
+        GetHoyoPlayRequestHeader());
 
     if (res.error || res.status_code != 200 || res.text.empty())
     {
-        LogWarning("账号登录二维码请求异常，gameType=" + ToString(loginType) +
-                   ", status=" + std::to_string(res.status_code) +
+        LogWarning("账号登录二维码请求异常，status=" + std::to_string(res.status_code) +
                    ", error=" + res.error.message);
         return {};
     }
@@ -173,32 +205,38 @@ inline LoginQRCodeInfo CreateLoginQRCode()
         const int retcode = data.value("retcode", -1);
         if (retcode != 0)
         {
-            LogWarning("账号登录二维码请求失败，gameType=" + ToString(loginType) +
-                       ", retcode=" + std::to_string(retcode));
+            LogWarning("账号登录二维码请求失败，retcode=" + std::to_string(retcode) +
+                       ", message=" + data.value("message", ""));
             return {};
         }
-        result.url = data["data"]["url"].get<std::string>();
+        const auto responseData = data.value("data", nlohmann::json::object());
+        result.url = responseData.value("url", "");
+        result.ticket = responseData.value("ticket", "");
     }
     catch (const std::exception& e)
     {
-        LogError("账号登录二维码响应解析异常，gameType=" + ToString(loginType) +
-                 ", error=" + e.what());
+        LogError("账号登录二维码响应解析异常，error=" + std::string(e.what()));
         return {};
     }
 
     result.url = NormalizeLoginQrcodeUrl(std::move(result.url));
-    result.ticket = ExtractUrlQueryValue(result.url, "ticket");
+    if (result.ticket.empty())
+    {
+        result.ticket = ExtractUrlQueryValue(result.url, "ticket");
+    }
+    if (result.ticket.empty())
+    {
+        result.ticket = ExtractUrlQueryValue(result.url, "tk");
+    }
     if (result.url.empty() || result.ticket.empty())
     {
-        LogWarning("账号登录二维码响应缺少 URL 或 ticket，gameType=" + ToString(loginType) +
-                   ", urlLength=" +
+        LogWarning("账号登录二维码响应缺少 URL 或 ticket，urlLength=" +
                    std::to_string(result.url.size()) +
                    ", ticketLength=" + std::to_string(result.ticket.size()));
         return {};
     }
 
-    LogInfo("账号登录二维码已生成，gameType=" + ToString(loginType) +
-            ", urlLength=" + std::to_string(result.url.size()) +
+    LogInfo("账号登录二维码已生成，urlLength=" + std::to_string(result.url.size()) +
             ", ticket=" + MaskSensitive(result.ticket));
     return result;
 }
@@ -298,6 +336,110 @@ inline std::tuple<LoginQRCodeState, std::string, std::string> GetQRCodeState(
     }
 
     return { it->second, {}, {} };
+}
+
+inline LoginQRCodeSession GetLoginQRCodeSession(const std::string_view ticket)
+{
+    const auto response = cpr::Post(
+        cpr::Url{ api::mhy::passport::query_qr_login_status },
+        cpr::Body{ nlohmann::json{ { "ticket", std::string(ticket) } }.dump() },
+        GetHoyoPlayRequestHeader());
+
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("账号登录二维码状态查询异常，ticket=" + MaskSensitive(ticket) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+        return {};
+    }
+
+    nlohmann::json data;
+    try
+    {
+        data = nlohmann::json::parse(response.text);
+    }
+    catch (const std::exception& e)
+    {
+        LogError("账号登录二维码状态响应解析异常，ticket=" + MaskSensitive(ticket) +
+                 ", error=" + e.what());
+        return {};
+    }
+
+    const int retcode = data.value("retcode", -1);
+    if (retcode != 0)
+    {
+        LogWarning("账号登录二维码状态查询失败，ticket=" + MaskSensitive(ticket) +
+                   ", retcode=" + std::to_string(retcode) +
+                   ", message=" + data.value("message", ""));
+        return {};
+    }
+
+    LoginQRCodeSession session{};
+    nlohmann::json responseData{};
+    std::string status{};
+    try
+    {
+        responseData = data.value("data", nlohmann::json::object());
+        status = responseData.value("status", "");
+    }
+    catch (const std::exception& e)
+    {
+        LogError("账号登录二维码状态数据结构异常，ticket=" + MaskSensitive(ticket) +
+                 ", error=" + e.what());
+        return {};
+    }
+
+    if (status == "Created" || status == "Init")
+    {
+        session.state = LoginQRCodeState::Init;
+        return session;
+    }
+    if (status == "Scanned")
+    {
+        LogInfo("账号登录二维码已扫码，ticket=" + MaskSensitive(ticket));
+        session.state = LoginQRCodeState::Scanned;
+        return session;
+    }
+    if (status != "Confirmed")
+    {
+        LogWarning("账号登录二维码状态未知，ticket=" + MaskSensitive(ticket) +
+                   ", status=" + status);
+        return session;
+    }
+
+    session.state = LoginQRCodeState::Confirmed;
+    LogInfo("账号登录二维码已确认，ticket=" + MaskSensitive(ticket));
+    try
+    {
+        const auto userInfo = responseData.value("user_info", nlohmann::json::object());
+        session.uid = userInfo.value("aid", "");
+        session.mid = userInfo.value("mid", "");
+        const auto tokens = responseData.value("tokens", nlohmann::json::array());
+        for (const auto& token : tokens)
+        {
+            if (token.value("token_type", 0) == 1)
+            {
+                session.stoken = token.value("token", "");
+                break;
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        LogError("账号登录二维码确认数据结构异常，ticket=" + MaskSensitive(ticket) +
+                 ", error=" + e.what());
+        return session;
+    }
+
+    if (session.uid.empty() || session.mid.empty() || session.stoken.empty())
+    {
+        LogWarning("账号登录二维码确认缺少可保存的 STOKEN 信息，uid=" + MaskSensitive(session.uid) +
+                   ", mid=" + MaskSensitive(session.mid) +
+                   ", hasStoken=" + std::string(session.stoken.empty() ? "false" : "true"));
+        return session;
+    }
+
+    return session;
 }
 
 inline std::string getMysUserName(const std::string_view uid)
