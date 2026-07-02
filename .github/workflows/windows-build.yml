@@ -128,8 +128,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIP_NAME }}
-          path: ${{ env.ZIP_NAME }}
+          name: MHY_Scanner_${{ github.ref_name }}
+          path: ${{ env.INSTALL_DIR }}/*
           retention-days: 5
 
       - name: Create GitHub Release
