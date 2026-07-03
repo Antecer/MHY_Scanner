@@ -21,6 +21,7 @@ public:
     Q_DISABLE_COPY_MOVE(QRCodeForScreen)
 
     void setLoginInfo(const std::string& uid, const std::string& token);
+    void setLoginInfo(const std::string& uid, const std::string& gameToken, const std::string& stoken, const std::string& mid);
     void setLoginInfo(const std::string& uid, const std::string& token, const std::string& name);
     void setServerType(const ServerType servertype);
     void continueLastLogin();

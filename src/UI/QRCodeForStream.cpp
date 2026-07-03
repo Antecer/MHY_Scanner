@@ -2,6 +2,7 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "AsyncLogger.h"
 #include "QRScanner.h"
@@ -37,6 +38,18 @@ void QRCodeForStream::setLoginInfo(const std::string_view uid, const std::string
 {
     this->uid = uid;
     this->gameToken = gameToken;
+    this->stoken.clear();
+    this->mid.clear();
+    this->passportQrPayload = {};
+}
+
+void QRCodeForStream::setLoginInfo(const std::string_view uid, const std::string_view gameToken, const std::string_view stoken, const std::string_view mid)
+{
+    this->uid = uid;
+    this->gameToken = gameToken;
+    this->stoken = stoken;
+    this->mid = mid;
+    this->passportQrPayload = {};
 }
 
 void QRCodeForStream::setLoginInfo(const std::string_view uid, const std::string_view gameToken, const std::string& name)
@@ -44,6 +57,9 @@ void QRCodeForStream::setLoginInfo(const std::string_view uid, const std::string
     this->uid = uid;
     this->gameToken = gameToken;
     this->m_name = name;
+    this->stoken.clear();
+    this->mid.clear();
+    this->passportQrPayload = {};
 }
 
 void QRCodeForStream::setServerType(const ServerType servertype)
@@ -113,9 +129,23 @@ void QRCodeForStream::LoginOfficial()
                         mtx.unlock();
                         return;
                     }
-                    if (ScanQRLogin(scanUrl.data(), ticket, gameType))
+                    const ScanQRCodeResult scanResult = ScanQRLoginDetailed(scanUrl.data(), ticket, gameType);
+                    bool scanSubmitted = scanResult.success;
+                    PassportQRCodePayload nextPassportPayload{};
+                    if (scanResult.hasPassportPayload())
+                    {
+                        LogInfo("直播流游戏二维码返回通行证二段确认，ticket=" + MaskSensitive(scanResult.passportTicket));
+                        scanSubmitted = ScanPassportQRCode(scanResult.passportTicket, scanResult.passportTokenTypes, this->stoken, this->mid);
+                        if (scanSubmitted)
+                        {
+                            nextPassportPayload.ticket = scanResult.passportTicket;
+                            nextPassportPayload.tokenTypes = scanResult.passportTokenTypes;
+                        }
+                    }
+                    if (scanSubmitted)
                     {
                         lastTicket = ticket;
+                        passportQrPayload = std::move(nextPassportPayload);
                         nlohmann::json config = nlohmann::json::parse(m_config->getConfig());
                         if (config["auto_login"])
                         {
@@ -343,7 +373,28 @@ void QRCodeForStream::continueLastLogin()
         using enum ServerType;
     case Official:
     {
-        bool b = ConfirmQRLogin(confirmUrl, uid, gameToken, lastTicket, gameType);
+        bool b = false;
+        if (passportQrPayload.valid())
+        {
+            b = ConfirmPassportQRCode(passportQrPayload.ticket, passportQrPayload.tokenTypes, this->stoken, this->mid);
+        }
+        else
+        {
+            std::string confirmGameToken = gameToken;
+            if (confirmGameToken.empty())
+            {
+                auto [code, fetchedGameToken] = GetGameTokenByStoken(this->stoken, this->mid);
+                if (code != 0)
+                {
+                    LogWarning("直播流官服二维码登录确认获取 game_token 失败，uid=" + MaskSensitive(uid) +
+                               ", code=" + std::to_string(code));
+                    Q_EMIT loginResults(ScanRet::FAILURE_2);
+                    return;
+                }
+                confirmGameToken = std::move(fetchedGameToken);
+            }
+            b = ConfirmQRLogin(confirmUrl, uid, confirmGameToken, lastTicket, gameType);
+        }
         if (b)
         {
             LogInfo("直播流官服二维码登录确认成功，gameType=" + ToString(gameType));

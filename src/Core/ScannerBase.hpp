@@ -1,19 +1,36 @@
 ﻿#pragma once
 
+#include <functional>
+#include <map>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "ApiDefs.hpp"
 
 class ScannerBase
 {
 public:
+    struct PassportQRCodePayload
+    {
+        std::string ticket{};
+        std::vector<std::string> tokenTypes{};
+
+        [[nodiscard]] bool valid() const
+        {
+            return !ticket.empty();
+        }
+    };
+
     GameType gameType;
     std::string_view scanUrl{};
     std::string_view confirmUrl{};
     std::string lastTicket;
     std::string uid;
     std::string gameToken{};
+    std::string stoken{};
+    std::string mid{};
+    PassportQRCodePayload passportQrPayload{};
     std::map<std::string_view, std::function<void()>> setGameType{
         { "8F3", [this]() {
              gameType = GameType::Honkai3;

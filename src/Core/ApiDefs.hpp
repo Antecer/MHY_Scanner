@@ -62,6 +62,7 @@ constinit const std::string_view mihoyobbs_salt_web{ "zZDfHqEcwTqvvKDmqRcHyqqurx
 
 constinit const std::string_view mihoyobbs_salt_x4{ "xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs" };
 constinit const std::string_view mihoyobbs_salt_x6{ "t0qEgfub6cvueAPgR5m9aQWWVciEer7v" };
+constinit const std::string_view mihoyobbs_salt_prod{ "JwYDpKvLj6MrMqqYU6jTKF17KNO2PXoS" };
 
 namespace api::mhy
 {
@@ -108,6 +109,7 @@ namespace takumi
 constexpr compile_string base{ "https://api-takumi.mihoyo.com" };
 constexpr auto multi_token = base + compile_string{ "/auth/api/getMultiTokenByLoginTicket" };
 constexpr auto game_token = base + compile_string{ "/auth/api/getGameToken" };
+constexpr auto game_token_stoken = base + compile_string{ "/account/ma-cn-session/app/getTokenByGameToken" };
 }
 
 namespace passport
@@ -115,6 +117,8 @@ namespace passport
 constexpr compile_string base{ "https://passport-api.mihoyo.com" };
 constexpr auto create_qr_login = base + compile_string{ "/account/ma-cn-passport/app/createQRLogin" };
 constexpr auto query_qr_login_status = base + compile_string{ "/account/ma-cn-passport/app/queryQRLoginStatus" };
+constexpr auto scan_qr_login = base + compile_string{ "/account/ma-cn-passport/app/scanQRLogin" };
+constexpr auto confirm_qr_login = base + compile_string{ "/account/ma-cn-passport/app/confirmQRLogin" };
 constexpr auto create_captcha = base + compile_string{ "/account/ma-cn-verifier/verifier/createLoginCaptcha" };
 constexpr auto login_by_mobile_captcha = base + compile_string{ "/account/ma-cn-passport/app/loginByMobileCaptcha" };
 constexpr auto game_token_stoken = base + compile_string{ "/account/ma-cn-session/app/getTokenByGameToken" };

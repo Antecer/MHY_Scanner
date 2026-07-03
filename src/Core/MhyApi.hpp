@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <cctype>
 #include <string>
 #include <string_view>
 #include <format>
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 #include <cpr/cpr.h>
@@ -38,7 +40,24 @@ inline std::string CreateLowerAndNumberString(const std::size_t length)
     return result;
 }
 
+inline std::string CreateLowerHexString(const std::size_t length)
+{
+    static constexpr std::string_view chars{ "0123456789abcdef" };
+    std::random_device rd{};
+    std::mt19937 gen{ rd() };
+    std::uniform_int_distribution<std::size_t> dist(0, chars.size() - 1);
+
+    std::string result{};
+    result.reserve(length);
+    for (std::size_t i = 0; i < length; ++i)
+    {
+        result.push_back(chars[dist(gen)]);
+    }
+    return result;
+}
+
 static const std::string device_id{ CreateUUID::CreateUUID4() };
+static const std::string device_fp{ CreateLowerHexString(13) };
 static const std::string hoyoplay_device_id{ CreateLowerAndNumberString(53) };
 static GameType loginType{ GameType::Honkai3 };
 
@@ -93,6 +112,107 @@ inline std::string ExtractUrlQueryValue(const std::string_view url, const std::s
     return std::string{ url.substr(valueBegin, valueEnd - valueBegin) };
 }
 
+struct ScanQRCodeResult
+{
+    bool success{};
+    std::string passportTicket{};
+    std::vector<std::string> passportTokenTypes{};
+
+    [[nodiscard]] bool hasPassportPayload() const
+    {
+        return !passportTicket.empty();
+    }
+};
+
+inline std::string TrimCopy(const std::string_view value)
+{
+    std::size_t begin{};
+    while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])))
+    {
+        ++begin;
+    }
+    std::size_t end{ value.size() };
+    while (end > begin && std::isspace(static_cast<unsigned char>(value[end - 1])))
+    {
+        --end;
+    }
+    return std::string{ value.substr(begin, end - begin) };
+}
+
+inline std::vector<std::string> ParseTokenTypes(const std::string_view value)
+{
+    std::vector<std::string> result{};
+    std::size_t begin{};
+    while (begin <= value.size())
+    {
+        const std::size_t end = value.find(',', begin);
+        const std::size_t tokenEnd = end == std::string_view::npos ? value.size() : end;
+        std::string token = TrimCopy(value.substr(begin, tokenEnd - begin));
+        if (!token.empty())
+        {
+            result.push_back(std::move(token));
+        }
+        if (end == std::string_view::npos)
+        {
+            break;
+        }
+        begin = end + 1;
+    }
+    if (result.empty())
+    {
+        result.push_back("1");
+    }
+    return result;
+}
+
+inline std::vector<std::string> NormalizeTokenTypes(const std::vector<std::string>& tokenTypes)
+{
+    std::vector<std::string> result{};
+    result.reserve(tokenTypes.size());
+    for (const auto& tokenType : tokenTypes)
+    {
+        std::string value = TrimCopy(tokenType);
+        if (!value.empty())
+        {
+            result.push_back(std::move(value));
+        }
+    }
+    if (result.empty())
+    {
+        result.push_back("1");
+    }
+    return result;
+}
+
+inline std::string BuildStokenCookie(const std::string_view stoken, const std::string_view mid)
+{
+    return "stoken=" + TrimCopy(stoken) + ";mid=" + TrimCopy(mid);
+}
+
+inline ScanQRCodeResult ParseScanQRCodeResult(const nlohmann::json& response)
+{
+    ScanQRCodeResult result{};
+    result.success = true;
+    std::string passportUrl{};
+    if (const auto data = response.find("data"); data != response.end() && data->is_object())
+    {
+        passportUrl = data->value("passport_qr_url", "");
+    }
+    if (passportUrl.empty())
+    {
+        return result;
+    }
+
+    const std::string normalizedUrl = NormalizeLoginQrcodeUrl(passportUrl);
+    result.passportTicket = ExtractUrlQueryValue(normalizedUrl, "tk");
+    if (result.passportTicket.empty())
+    {
+        result.passportTicket = ExtractUrlQueryValue(normalizedUrl, "ticket");
+    }
+    result.passportTokenTypes = ParseTokenTypes(ExtractUrlQueryValue(normalizedUrl, "token_types"));
+    return result;
+}
+
 struct LoginQRCodeInfo
 {
     std::string url{};
@@ -122,6 +242,14 @@ struct LoginQRCodeSession
     std::uniform_int_distribution<int> dist(lower_bound, upper_bound);
     const std::string rand{ std::to_string(dist(gen)) };
     std::string m{ "salt=" + std::string(mihoyobbs_salt_x6) + "&t=" + time_now + "&r=" + rand + "&b=" + std::string(body) + "&q=" + std::string(query) };
+    return time_now + "," + rand + "," + Md5(m);
+}
+
+[[nodiscard]] inline std::string DataSignAlgorithmVersionGen2Prod(const std::string_view body)
+{
+    const std::string time_now{ std::to_string(GetUnixTimeStampSeconds()) };
+    const std::string rand{ CreateLowerAndNumberString(6) };
+    const std::string m{ "salt=" + std::string(mihoyobbs_salt_prod) + "&t=" + time_now + "&r=" + rand + "&b=" + std::string(body) + "&q=" };
     return time_now + "," + rand + "," + Md5(m);
 }
 
@@ -452,6 +580,67 @@ inline std::string getMysUserName(const std::string_view uid)
     return data["data"]["user_info"]["nickname"].get<std::string>();
 }
 
+inline std::tuple<int, std::string, std::string> RequestStokenByGameToken(
+    const std::string_view endpoint,
+    const std::string_view uid,
+    const std::string& body,
+    const cpr::Header& headers)
+{
+    const auto response = cpr::Post(
+        cpr::Url{ std::string(endpoint) },
+        cpr::Body{ body },
+        cpr::Header{ headers });
+
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("通过 game_token 换取 STOKEN 请求异常，uid=" + MaskSensitive(uid) +
+                   ", endpoint=" + std::string(endpoint) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+        return { -1, {}, {} };
+    }
+
+    nlohmann::json j;
+    try
+    {
+        j = nlohmann::json::parse(response.text);
+    }
+    catch (const std::exception& e)
+    {
+        LogError("通过 game_token 换取 STOKEN 响应解析异常，uid=" + MaskSensitive(uid) +
+                 ", endpoint=" + std::string(endpoint) +
+                 ", error=" + e.what());
+        return { -1, {}, {} };
+    }
+    const int retcode = j.value("retcode", -1);
+
+    if (retcode != 0)
+    {
+        LogWarning("通过 game_token 换取 STOKEN 失败，uid=" + MaskSensitive(uid) +
+                   ", endpoint=" + std::string(endpoint) +
+                   ", retcode=" + std::to_string(retcode) +
+                   ", message=" + j.value("message", ""));
+        return { retcode, {}, {} };
+    }
+
+    try
+    {
+        const std::string mid{ j["data"]["user_info"]["mid"].get<std::string>() };
+        const std::string stoken{ j["data"]["token"]["token"].get<std::string>() };
+        LogInfo("通过 game_token 换取 STOKEN 成功，uid=" + MaskSensitive(uid) +
+                ", endpoint=" + std::string(endpoint) +
+                ", mid=" + MaskSensitive(mid));
+        return { 0, mid, stoken };
+    }
+    catch (const std::exception& e)
+    {
+        LogError("通过 game_token 换取 STOKEN 数据结构异常，uid=" + MaskSensitive(uid) +
+                 ", endpoint=" + std::string(endpoint) +
+                 ", error=" + e.what());
+        return { -1, {}, {} };
+    }
+}
+
 inline std::tuple<int, std::string, std::string> GetStokenByGameToken(
     const std::string_view uid,
     const std::string_view game_token)
@@ -473,54 +662,15 @@ inline std::tuple<int, std::string, std::string> GetStokenByGameToken(
     cpr::Header reqHeaders{ GetQRCodeRequestHeader() };
     reqHeaders["DS"] = DataSignAlgorithmVersionGen2(body, "");
 
-    const auto response = cpr::Post(
-        cpr::Url{ api::mhy::passport::game_token_stoken },
-        cpr::Body{ body },
-        cpr::Header{ reqHeaders });
-
-    if (response.error || response.status_code != 200 || response.text.empty())
+    for (const std::string_view endpoint : { std::string_view{ api::mhy::takumi::game_token_stoken }, std::string_view{ api::mhy::passport::game_token_stoken } })
     {
-        LogWarning("通过 game_token 换取 STOKEN 请求异常，uid=" + MaskSensitive(uid) +
-                   ", status=" + std::to_string(response.status_code) +
-                   ", error=" + response.error.message);
-        return { -1, {}, {} };
+        auto [code, mid, stoken] = RequestStokenByGameToken(endpoint, uid, body, reqHeaders);
+        if (code == 0)
+        {
+            return { code, mid, stoken };
+        }
     }
-
-    nlohmann::json j;
-    try
-    {
-        j = nlohmann::json::parse(response.text);
-    }
-    catch (const std::exception& e)
-    {
-        LogError("通过 game_token 换取 STOKEN 响应解析异常，uid=" + MaskSensitive(uid) +
-                 ", error=" + e.what());
-        return { -1, {}, {} };
-    }
-    const int retcode = j.value("retcode", -1);
-
-    if (retcode != 0)
-    {
-        LogWarning("通过 game_token 换取 STOKEN 失败，uid=" + MaskSensitive(uid) +
-                   ", retcode=" + std::to_string(retcode) +
-                   ", message=" + j.value("message", ""));
-        return { retcode, {}, {} };
-    }
-
-    try
-    {
-        const std::string mid{ j["data"]["user_info"]["mid"].get<std::string>() };
-        const std::string stoken{ j["data"]["token"]["token"].get<std::string>() };
-        LogInfo("通过 game_token 换取 STOKEN 成功，uid=" + MaskSensitive(uid) +
-                ", mid=" + MaskSensitive(mid));
-        return { 0, mid, stoken };
-    }
-    catch (const std::exception& e)
-    {
-        LogError("通过 game_token 换取 STOKEN 数据结构异常，uid=" + MaskSensitive(uid) +
-                 ", error=" + e.what());
-        return { -1, {}, {} };
-    }
+    return { -1, {}, {} };
 }
 
 inline std::tuple<int, std::string> GetGameTokenByStoken(
@@ -530,16 +680,48 @@ inline std::tuple<int, std::string> GetGameTokenByStoken(
     const auto response = cpr::Get(
         cpr::Url{ api::mhy::takumi::game_token },
         cpr::Parameters{
-            { "stoken", stoken.data() },
-            { "mid", mid.data() } });
+            { "stoken", TrimCopy(stoken) },
+            { "mid", TrimCopy(mid) } });
 
-    const auto j = nlohmann::json::parse(response.text);
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("通过 STOKEN 获取 game_token 请求异常，mid=" + MaskSensitive(mid) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+        return { -1, {} };
+    }
+
+    nlohmann::json j;
+    try
+    {
+        j = nlohmann::json::parse(response.text);
+    }
+    catch (const std::exception& e)
+    {
+        LogError("通过 STOKEN 获取 game_token 响应解析异常，mid=" + MaskSensitive(mid) +
+                 ", error=" + e.what());
+        return { -1, {} };
+    }
+
     const int retcode = j.value("retcode", -1);
-
     if (retcode != 0)
+    {
+        LogWarning("通过 STOKEN 获取 game_token 失败，mid=" + MaskSensitive(mid) +
+                   ", retcode=" + std::to_string(retcode) +
+                   ", message=" + j.value("message", ""));
         return { retcode, {} };
+    }
 
-    return { 0, j["data"]["game_token"].get<std::string>() };
+    try
+    {
+        return { 0, j["data"]["game_token"].get<std::string>() };
+    }
+    catch (const std::exception& e)
+    {
+        LogError("通过 STOKEN 获取 game_token 数据结构异常，mid=" + MaskSensitive(mid) +
+                 ", error=" + e.what());
+        return { -1, {} };
+    }
 }
 
 inline std::tuple<int, GeetestData> CreateLoginCaptcha(
@@ -626,15 +808,108 @@ inline auto LoginByMobileCaptcha(const std::string_view actionType, const std::s
     return result;
 }
 
-inline bool ScanQRLogin(const std::string_view url, const std::string_view ticket, GameType gameType)
+inline bool SubmitPassportQRCode(
+    const std::string_view url,
+    const std::string_view ticket,
+    const std::vector<std::string>& tokenTypes,
+    const std::string_view stoken,
+    const std::string_view mid,
+    const std::string_view action)
+{
+    if (TrimCopy(stoken).empty() || TrimCopy(mid).empty())
+    {
+        LogWarning("通行证二维码" + std::string(action) + "缺少 STOKEN 或 mid，ticket=" + MaskSensitive(ticket));
+        return false;
+    }
+
+    const auto normalizedTokenTypes = NormalizeTokenTypes(tokenTypes);
+    const std::string body{ nlohmann::json{
+        { "ticket", std::string(ticket) },
+        { "token_types", normalizedTokenTypes } }
+                                .dump() };
+    cpr::Header headers{
+        { "Content-Type", "application/json" },
+        { "Accept", "application/json" },
+        { "Cookie", BuildStokenCookie(stoken, mid) },
+        { "DS", DataSignAlgorithmVersionGen2Prod(body) },
+        { "x-rpc-app_id", "bll8iq97cem8" },
+        { "x-rpc-client_type", "2" },
+        { "x-rpc-device_id", device_id },
+        { "x-rpc-device_fp", device_fp },
+        { "x-rpc-device_name", "Windows" },
+        { "x-rpc-device_model", "Windows" },
+        { "x-rpc-sys_version", "Windows 10" },
+        { "x-rpc-game_biz", "bbs_cn" },
+        { "x-rpc-app_version", "2.107.0" },
+        { "x-rpc-sdk_version", "2.42.0" },
+        { "x-rpc-account_version", "2.42.0" }
+    };
+
+    LogInfo("提交通行证二维码" + std::string(action) + "请求，ticket=" + MaskSensitive(ticket));
+    const auto response = cpr::Post(
+        cpr::Url{ std::string(url) },
+        cpr::Body{ body },
+        cpr::Header{ headers });
+
+    if (response.error || response.status_code != 200 || response.text.empty())
+    {
+        LogWarning("通行证二维码" + std::string(action) + "请求异常，ticket=" + MaskSensitive(ticket) +
+                   ", status=" + std::to_string(response.status_code) +
+                   ", error=" + response.error.message);
+        return false;
+    }
+
+    try
+    {
+        const auto j = nlohmann::json::parse(response.text);
+        const int retcode = j.value("retcode", -1);
+        if (retcode == 0)
+        {
+            LogInfo("通行证二维码" + std::string(action) + "成功，ticket=" + MaskSensitive(ticket));
+            return true;
+        }
+        LogWarning("通行证二维码" + std::string(action) + "失败，ticket=" + MaskSensitive(ticket) +
+                   ", retcode=" + std::to_string(retcode) +
+                   ", message=" + j.value("message", ""));
+        return false;
+    }
+    catch (const std::exception& e)
+    {
+        LogError("通行证二维码" + std::string(action) + "响应解析异常，ticket=" + MaskSensitive(ticket) +
+                 ", error=" + e.what());
+        return false;
+    }
+}
+
+inline bool ScanPassportQRCode(
+    const std::string_view ticket,
+    const std::vector<std::string>& tokenTypes,
+    const std::string_view stoken,
+    const std::string_view mid)
+{
+    return SubmitPassportQRCode(api::mhy::passport::scan_qr_login, ticket, tokenTypes, stoken, mid, "扫码");
+}
+
+inline bool ConfirmPassportQRCode(
+    const std::string_view ticket,
+    const std::vector<std::string>& tokenTypes,
+    const std::string_view stoken,
+    const std::string_view mid)
+{
+    return SubmitPassportQRCode(api::mhy::passport::confirm_qr_login, ticket, tokenTypes, stoken, mid, "确认登录");
+}
+
+inline ScanQRCodeResult ScanQRLoginDetailed(const std::string_view url, const std::string_view ticket, GameType gameType)
 {
     LogInfo("提交二维码扫码请求，gameType=" + ToString(gameType) +
             ", ticket=" + MaskSensitive(ticket));
     const auto response = cpr::Post(
-        cpr::Url{ url },
+        cpr::Url{ std::string(url) },
         cpr::Body{ nlohmann::json{
             { "app_id", static_cast<int>(gameType) },
             { "device", device_id },
+            { "passport_app_id", "bll8iq97cem8" },
+            { "ts", GetUnixTimeStampMilliseconds() },
             { "ticket", ticket } }
                        .dump() },
         cpr::Header{ { "Content-Type", "application/json" } });
@@ -645,6 +920,7 @@ inline bool ScanQRLogin(const std::string_view url, const std::string_view ticke
                    ", ticket=" + MaskSensitive(ticket) +
                    ", status=" + std::to_string(response.status_code) +
                    ", error=" + response.error.message);
+        return {};
     }
 
     try
@@ -655,20 +931,26 @@ inline bool ScanQRLogin(const std::string_view url, const std::string_view ticke
         {
             LogInfo("二维码扫码成功，gameType=" + ToString(gameType) +
                     ", ticket=" + MaskSensitive(ticket));
-            return true;
+            return ParseScanQRCodeResult(j);
         }
         LogWarning("二维码扫码失败，gameType=" + ToString(gameType) +
                    ", ticket=" + MaskSensitive(ticket) +
-                   ", retcode=" + std::to_string(retcode));
-        return false;
+                   ", retcode=" + std::to_string(retcode) +
+                   ", message=" + j.value("message", ""));
+        return {};
     }
     catch (const std::exception& e)
     {
         LogError("二维码扫码响应解析异常，gameType=" + ToString(gameType) +
                  ", ticket=" + MaskSensitive(ticket) +
                  ", error=" + e.what());
-        return false;
+        return {};
     }
+}
+
+inline bool ScanQRLogin(const std::string_view url, const std::string_view ticket, GameType gameType)
+{
+    return ScanQRLoginDetailed(url, ticket, gameType).success;
 }
 
 inline bool ConfirmQRLogin(const std::string_view url, const std::string_view uid, const std::string_view gameToken, const std::string_view ticket, GameType gameType)

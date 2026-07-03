@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <thread>
+#include <utility>
 
 #include <QFuture>
 #include <QtConcurrent/QtConcurrent>
@@ -35,6 +36,18 @@ void QRCodeForScreen::setLoginInfo(const std::string& uid, const std::string& to
 {
     this->uid = uid;
     this->gameToken = token;
+    this->stoken.clear();
+    this->mid.clear();
+    this->passportQrPayload = {};
+}
+
+void QRCodeForScreen::setLoginInfo(const std::string& uid, const std::string& gameToken, const std::string& stoken, const std::string& mid)
+{
+    this->uid = uid;
+    this->gameToken = gameToken;
+    this->stoken = stoken;
+    this->mid = mid;
+    this->passportQrPayload = {};
 }
 
 void QRCodeForScreen::setLoginInfo(const std::string& uid, const std::string& token, const std::string& name)
@@ -42,6 +55,9 @@ void QRCodeForScreen::setLoginInfo(const std::string& uid, const std::string& to
     this->uid = uid;
     this->gameToken = token;
     this->m_name = name;
+    this->stoken.clear();
+    this->mid.clear();
+    this->passportQrPayload = {};
 }
 
 void QRCodeForScreen::LoginOfficial()
@@ -97,9 +113,23 @@ void QRCodeForScreen::LoginOfficial()
                     mtx.unlock();
                     return;
                 }
-                if (ScanQRLogin(scanUrl.data(), ticket, gameType))
+                const ScanQRCodeResult scanResult = ScanQRLoginDetailed(scanUrl.data(), ticket, gameType);
+                bool scanSubmitted = scanResult.success;
+                PassportQRCodePayload nextPassportPayload{};
+                if (scanResult.hasPassportPayload())
+                {
+                    LogInfo("屏幕游戏二维码返回通行证二段确认，ticket=" + MaskSensitive(scanResult.passportTicket));
+                    scanSubmitted = ScanPassportQRCode(scanResult.passportTicket, scanResult.passportTokenTypes, this->stoken, this->mid);
+                    if (scanSubmitted)
+                    {
+                        nextPassportPayload.ticket = scanResult.passportTicket;
+                        nextPassportPayload.tokenTypes = scanResult.passportTokenTypes;
+                    }
+                }
+                if (scanSubmitted)
                 {
                     lastTicket = ticket;
+                    passportQrPayload = std::move(nextPassportPayload);
                     nlohmann::json config = nlohmann::json::parse(m_config->getConfig());
                     if (config["auto_login"])
                     {
@@ -221,7 +251,28 @@ void QRCodeForScreen::continueLastLogin()
         using enum ServerType;
     case Official:
     {
-        bool b = ConfirmQRLogin(confirmUrl, uid, gameToken, lastTicket, gameType);
+        bool b = false;
+        if (passportQrPayload.valid())
+        {
+            b = ConfirmPassportQRCode(passportQrPayload.ticket, passportQrPayload.tokenTypes, this->stoken, this->mid);
+        }
+        else
+        {
+            std::string confirmGameToken = gameToken;
+            if (confirmGameToken.empty())
+            {
+                auto [code, fetchedGameToken] = GetGameTokenByStoken(this->stoken, this->mid);
+                if (code != 0)
+                {
+                    LogWarning("屏幕官服二维码登录确认获取 game_token 失败，uid=" + MaskSensitive(uid) +
+                               ", code=" + std::to_string(code));
+                    Q_EMIT loginResults(ScanRet::FAILURE_2);
+                    return;
+                }
+                confirmGameToken = std::move(fetchedGameToken);
+            }
+            b = ConfirmQRLogin(confirmUrl, uid, confirmGameToken, lastTicket, gameType);
+        }
         if (b)
         {
             LogInfo("屏幕官服二维码登录确认成功，gameType=" + ToString(gameType));
