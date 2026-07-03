@@ -527,9 +527,11 @@ bool WindowMain::GetStreamLink(const std::string& roomid, std::string& url, std:
     if (info.status == LiveStreamStatus::Normal)
     {
         url = info.link;
+        heards = GetLiveStreamOpenOptions(platform);
         LogInfo("直播流地址获取成功，platform=" + ToString(platform) +
                 ", roomID=" + roomid +
-                ", linkLength=" + std::to_string(url.length()));
+                ", linkLength=" + std::to_string(url.length()) +
+                ", openOptionCount=" + std::to_string(heards.size()));
         return true;
     }
     else

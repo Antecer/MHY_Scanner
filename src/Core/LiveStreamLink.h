@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <map>
 #include <string>
 #include <nlohmann/json.hpp>
 #include <memory>
@@ -63,3 +64,4 @@ LiveStreamInfo GetLiveInfo(const std::string& roomID)
 }
 
 LiveStreamInfo GetLiveInfo(const LivePlatform platform, const std::string& roomID);
+std::map<std::string, std::string> GetLiveStreamOpenOptions(LivePlatform platform);

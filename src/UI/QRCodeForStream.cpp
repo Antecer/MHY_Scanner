@@ -8,6 +8,19 @@
 #include "QRScanner.h"
 #include "MhyApi.hpp"
 
+namespace
+{
+std::string AvErrorText(const int errorCode)
+{
+    char buffer[AV_ERROR_MAX_STRING_SIZE]{};
+    if (av_strerror(errorCode, buffer, sizeof(buffer)) == 0)
+    {
+        return buffer;
+    }
+    return "unknown error " + std::to_string(errorCode);
+}
+}
+
 QRCodeForStream::QRCodeForStream(QObject* parent) :
     QThread(parent),
     pAvdictionary(nullptr),
@@ -289,6 +302,7 @@ void QRCodeForStream::stop()
 void QRCodeForStream::setUrl(const std::string& url, const std::map<std::string, std::string> heard)
 {
     streamUrl = url;
+    av_dict_free(&pAvdictionary);
     LogInfo("设置直播流地址，linkLength=" + std::to_string(streamUrl.length()) +
             ", headerCount=" + std::to_string(heard.size()));
     for (const auto& it : heard)
@@ -297,25 +311,33 @@ void QRCodeForStream::setUrl(const std::string& url, const std::map<std::string,
     }
     av_dict_set(&pAvdictionary, "max_delay", "0", 0);
     av_dict_set(&pAvdictionary, "probesize", "1024", 0);
-    av_dict_set(&pAvdictionary, "packetsize", "128", 0);
-    av_dict_set(&pAvdictionary, "rtbufsize", "0", 0);
-    av_dict_set(&pAvdictionary, "delay", "0", 0);
-    av_dict_set(&pAvdictionary, "buffer_size", "1000", 0);
+    av_dict_set(&pAvdictionary, "analyzeduration", "0", 0);
+    av_dict_set(&pAvdictionary, "fflags", "nobuffer", 0);
+    av_dict_set(&pAvdictionary, "flags", "low_delay", 0);
+    av_dict_set(&pAvdictionary, "rw_timeout", "10000000", 0);
 }
 
 auto QRCodeForStream::init() -> bool
 {
     LogInfo("开始初始化直播流，linkLength=" + std::to_string(streamUrl.length()));
+    avformat_close_input(&pAVFormatContext);
+    avcodec_free_context(&pAVCodecContext);
+    sws_freeContext(pSwsContext);
+    av_frame_free(&pAVFrame);
+    av_packet_free(&pAVPacket);
+    pSwsContext = nullptr;
     pAVFormatContext = avformat_alloc_context();
-    if (avformat_open_input(&pAVFormatContext, streamUrl.c_str(), NULL, &pAvdictionary) != 0)
+    const int openRet = avformat_open_input(&pAVFormatContext, streamUrl.c_str(), NULL, &pAvdictionary);
+    if (openRet < 0)
     {
-        LogError("打开直播流失败");
+        LogError("打开直播流失败，error=" + AvErrorText(openRet));
         std::cerr << "Error opening input file" << std::endl;
         return false;
     }
-    if (avformat_find_stream_info(pAVFormatContext, NULL) < 0)
+    const int streamInfoRet = avformat_find_stream_info(pAVFormatContext, NULL);
+    if (streamInfoRet < 0)
     {
-        LogError("读取直播流信息失败");
+        LogError("读取直播流信息失败，error=" + AvErrorText(streamInfoRet));
         std::cerr << "Error finding stream information" << std::endl;
         return false;
     }
